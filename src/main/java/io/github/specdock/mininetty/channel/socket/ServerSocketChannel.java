@@ -8,4 +8,5 @@ import io.github.specdock.mininetty.channel.ServerChannel;
  * @Time 21:17
  */
 public interface ServerSocketChannel extends ServerChannel {
+    SocketChannel accept();
 }

@@ -1,10 +1,9 @@
 package io.github.specdock.mininetty.bootstrap;
 
 
-import io.github.specdock.mininetty.channel.Channel;
-import io.github.specdock.mininetty.channel.ChannelHandler;
-import io.github.specdock.mininetty.channel.EventLoopGroup;
-import io.github.specdock.mininetty.channel.ServerChannel;
+import io.github.specdock.mininetty.channel.*;
+import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
+import io.github.specdock.mininetty.channel.socket.SocketChannel;
 
 import java.net.InetSocketAddress;
 import java.nio.channels.SelectionKey;
@@ -24,6 +23,9 @@ public class ServerBootstrap {
     // boss 的 单个EventLoop 里的Channel类
     private Class<? extends ServerChannel> serverChannelClass;
 
+    // boss里的CHannel的Handler
+    private ChannelHandler handler;
+
     // workers里每个Channel的初始Handler
     private ChannelHandler childHandler;
 
@@ -42,8 +44,13 @@ public class ServerBootstrap {
         return this;
     }
 
-    public ServerBootstrap childHandler(ChannelHandler channelHandler){
-        this.childHandler = channelHandler;
+    public ServerBootstrap handler(ChannelHandler handler){
+        this.handler = handler;
+        return this;
+    }
+
+    public ServerBootstrap childHandler(ChannelHandler childHandler){
+        this.childHandler = childHandler;
         return this;
     }
 
@@ -64,6 +71,12 @@ public class ServerBootstrap {
             serverChannel.bind(inetSocketAddress);
             //将serverChannel注册到selector
             boss.register(serverChannel, SelectionKey.OP_ACCEPT);
+            //初始话ServerBootstrapAcceptor
+            //将给worker添加childHandler的Handler添加到serverChannel的pipeline
+            ServerBootstrapAcceptor serverBootstrapAcceptor = new ServerBootstrapAcceptor(workers, childHandler);
+            serverChannel.pipeline().addLast(serverBootstrapAcceptor);
+
+
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -73,6 +86,37 @@ public class ServerBootstrap {
         bind("127.0.0.1", port);
     }
 
+    // 在 ServerBootstrap.java 内部
+    private static class ServerBootstrapAcceptor implements ChannelInboundHandler {
 
+        private final EventLoopGroup workers;
+        private final ChannelHandler childHandler;
+
+        // 构造函数：在 bind() 时被调用，传入用户配置的参数
+        ServerBootstrapAcceptor(EventLoopGroup workers, ChannelHandler childHandler) {
+            this.workers = workers;
+            this.childHandler = childHandler;
+        }
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            // 1. 类型转换：对于 ServerChannel 来说，读取到的 msg 就是新连接
+            ServerSocketChannel serverSocketChannel = (ServerSocketChannel) msg;
+            SocketChannel socketChannel = serverSocketChannel.accept();
+
+            // 2. ★ 核心动作：将用户配置的 childHandler 加入新连接的 Pipeline
+            // 注意：这里不需要管它是 Initializer 还是普通 Handler，直接 addLast 即可
+            socketChannel.pipeline().addLast(childHandler);
+
+            // 3. 注册：将新连接移交给 Worker 线程组
+            // 这一步会触发 worker 的 channelRegistered 事件
+            workers.register(socketChannel, SelectionKey.OP_ACCEPT);
+        }
+
+        @Override
+        public void channelRegistered(ChannelHandlerContext ctx) {
+            ctx.fireChannelRegistered();
+        }
+    }
 
 }

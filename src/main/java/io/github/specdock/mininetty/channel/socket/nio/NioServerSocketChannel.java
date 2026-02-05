@@ -1,6 +1,7 @@
 package io.github.specdock.mininetty.channel.socket.nio;
 
 import io.github.specdock.mininetty.channel.ChannelHandler;
+import io.github.specdock.mininetty.channel.ChannelPipeline;
 import io.github.specdock.mininetty.channel.EventLoop;
 import io.github.specdock.mininetty.channel.EventLoopGroup;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
@@ -25,21 +26,27 @@ public class NioServerSocketChannel implements ServerSocketChannel {
 
     private SelectionKey selectionKey;
 
-    /// TODO 之后优化为netty的handler方法
+    private ChannelPipeline pipeline;
+
+    /// 已弃用
     /// 现在使用构造器方法，每一个ServerChannel都维护一个EventLoopGroup，方便在boss线程里accept到的channel注册到workers
-    private final EventLoopGroup workers;
+//    private final EventLoopGroup workers;
 
     private ChannelHandler workerChannelInitializer;
 
 
-    public NioServerSocketChannel(EventLoopGroup workers){
-        this.workers = workers;
+    public NioServerSocketChannel(){
         try {
             ssc = java.nio.channels.ServerSocketChannel.open();
             ssc.configureBlocking(false);
         } catch (IOException e) {
             throw new RuntimeException(this.getClass().getName() + "开启失败", e);
         }
+    }
+
+    @Override
+    public ChannelPipeline pipeline() {
+        return pipeline;
     }
 
     @Override
@@ -84,17 +91,19 @@ public class NioServerSocketChannel implements ServerSocketChannel {
     /**
      * 提交注册任务给workers
      * 一定要提交给workers线程做，因为workers的execute方法会打断selector监听，这样操作selector注册的时候selector不会监听
+     * 已经弃用
      */
-    @Override
-    public void registerToWorkers(){
-        NioSocketChannel accept = this.accept();
-        if(accept == null){
-            return;
-        }
-        workers.register(accept, SelectionKey.OP_READ);
-    }
+//    @Override
+//    public void registerToWorkers(){
+//        NioSocketChannel accept = this.accept();
+//        if(accept == null){
+//            return;
+//        }
+//        workers.register(accept, SelectionKey.OP_READ);
+//    }
 
-    public NioSocketChannel accept(){
+    @Override
+    public io.github.specdock.mininetty.channel.socket.SocketChannel accept(){
         try {
             SocketChannel accept = ssc.accept();
             if(accept == null){
@@ -117,13 +126,5 @@ public class NioServerSocketChannel implements ServerSocketChannel {
         return eventLoop;
     }
 
-    @Override
-    public void setWorkerChannelInitializer(ChannelHandler workerChannelInitializer) {
-        this.workerChannelInitializer = workerChannelInitializer;
-    }
 
-    @Override
-    public ChannelHandler getWorkerChannelInitializer() {
-        return workerChannelInitializer;
-    }
 }

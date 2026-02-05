@@ -21,4 +21,6 @@ public interface Channel {
     void setEventLoop(EventLoop eventLoop);
 
     EventLoop getEventLoop();
+
+    ChannelPipeline pipeline();
 }

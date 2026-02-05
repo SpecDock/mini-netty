@@ -237,7 +237,7 @@ public class NioEventLoop implements EventLoop {
                         // 监听到OP_ACCEPT事件
                         System.out.println("监听到OP_ACCEPT事件");
                         ServerChannel serverChannel = (ServerChannel) selectionKey.attachment();
-                        serverChannel.registerToWorkers();
+                        serverChannel.pipeline().fireChannelRead(serverChannel);
                     }
                     if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
                         // TODO channel针对读取事件的api
