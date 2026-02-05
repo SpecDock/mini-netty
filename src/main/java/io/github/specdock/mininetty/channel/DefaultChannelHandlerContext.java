@@ -22,22 +22,22 @@ public class DefaultChannelHandlerContext implements ChannelHandlerContext{
     // ---------------------------------- 组件获取
     @Override
     public Channel channel() {
-        return null;
+        return pipeline().channel();
     }
 
     @Override
     public EventLoop executor() {
-        return null;
+        return pipeline().channel().getEventLoop();
     }
 
     @Override
     public ChannelPipeline pipeline() {
-        return null;
+        return pipeline;
     }
 
     @Override
     public ChannelHandler handler() {
-        return null;
+        return handler;
     }
 
 
@@ -94,6 +94,7 @@ public class DefaultChannelHandlerContext implements ChannelHandlerContext{
     public ChannelHandlerContext flush() {
         return null;
     }
+
 
     @Override
     public void writeAndFlush(Object msg) {

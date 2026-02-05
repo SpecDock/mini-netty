@@ -6,9 +6,4 @@ package io.github.specdock.mininetty.channel;
  * @Time 21:17
  */
 public interface ServerChannel extends Channel{
-    public void registerToWorkers();
-
-    public void setWorkerChannelInitializer(ChannelHandler workerChannelInitializer);
-
-    public ChannelHandler getWorkerChannelInitializer();
 }

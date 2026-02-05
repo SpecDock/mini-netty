@@ -37,7 +37,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
     @Override
     public ChannelPipeline addLast(ChannelHandler handler) {
-        DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this)；
+        DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
         // 插入到head节点后面
         context.prev = head;
         context.next = head.next;
@@ -61,6 +61,12 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         return this;
     }
 
+    /**
+     * 用来唤醒ChannelInitializer（pipeline中的唯一一个ChannelHandler）
+     * 要用Channel所注册的Thread来执行，为了线程安全，所以会在注册后调用
+     *
+     * @return
+     */
     @Override
     public ChannelPipeline fireChannelRegistered() {
         return null;
@@ -101,7 +107,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
     @Override
     public void connect(SocketAddress remoteAddress) {
-        
+
     }
 
     @Override

@@ -75,6 +75,7 @@ public class NioSocketChannel implements SocketChannel {
         return eventLoop;
     }
 
+    @Override
     public ChannelPipeline pipeline(){
         return pipeline;
     }

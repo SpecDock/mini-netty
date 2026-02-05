@@ -5,5 +5,5 @@ package io.github.specdock.mininetty.channel;
  * @Date 2026/1/15
  * @Time 21:15
  */
-public interface ChannelOutboundHandler {
+public interface ChannelOutboundHandler extends ChannelHandler{
 }
