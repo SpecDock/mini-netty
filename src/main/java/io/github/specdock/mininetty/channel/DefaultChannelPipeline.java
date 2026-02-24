@@ -11,14 +11,14 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     private final Channel channel;
 
     // TODO 之后将提取一个抽象类出来
-    private DefaultChannelHandlerContext head;
-    private final DefaultChannelHandlerContext tail;
+    private AbstractChannelHandlerContext head;
+    private final AbstractChannelHandlerContext tail;
 
     public DefaultChannelPipeline(Channel channel){
         this.channel = channel;
         // TODO 之后这里的参数null改为HeadChannelHandler和TailCHannelHandler
-        head = new DefaultChannelHandlerContext(null, this);
-        tail = new DefaultChannelHandlerContext(null, this);
+        head = new HeadContext(this);
+        tail = new TailContext(this);
         head.next = tail;
         tail.prev = head;
     }
@@ -48,7 +48,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
     @Override
     public ChannelPipeline remove(ChannelHandler handler) {
-        DefaultChannelHandlerContext index = head.next;
+        AbstractChannelHandlerContext index = head.next;
         while(index != tail){
             if(index.handler() == handler){
                 index.prev.next = index.next;
@@ -77,11 +77,15 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         return null;
     }
 
+
+    /// TODO
     @Override
     public ChannelPipeline fireChannelRead(Object msg) {
-        return null;
+        head.fireChannelRead(msg);
+        return this;
     }
 
+    /// TODO
     @Override
     public ChannelPipeline fireChannelReadComplete() {
         return null;
@@ -159,4 +163,58 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     public ChannelHandler last() {
         return null;
     }
+
+
+
+    private static class HeadContext extends AbstractChannelHandlerContext implements ChannelOutboundHandler, ChannelInboundHandler{
+
+        public HeadContext(ChannelPipeline pipeline){
+            super(null, pipeline);
+            setHandler(this);
+        }
+
+        @Override
+        public void channelRegistered(ChannelHandlerContext ctx) {
+
+        }
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) {
+
+            ctx.fireChannelRead(msg);
+        }
+
+        @Override
+        public ChannelHandler handler() {
+            return this;
+        }
+    }
+
+    private static class TailContext extends AbstractChannelHandlerContext implements ChannelOutboundHandler, ChannelInboundHandler{
+
+        public TailContext(ChannelPipeline pipeline){
+            super(null, pipeline);
+            setHandler(this);
+        }
+
+        @Override
+        public void channelRegistered(ChannelHandlerContext ctx) {
+
+        }
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) {
+
+            // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
+        }
+
+        @Override
+        public ChannelHandler handler() {
+            return this;
+        }
+    }
+
+
+
+
 }

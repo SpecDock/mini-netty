@@ -23,7 +23,7 @@ public class ServerBootstrap {
     // boss 的 单个EventLoop 里的Channel类
     private Class<? extends ServerChannel> serverChannelClass;
 
-    // boss里的CHannel的Handler
+    // boss里的Channel的Handler
     private ChannelHandler handler;
 
     // workers里每个Channel的初始Handler
@@ -66,7 +66,7 @@ public class ServerBootstrap {
         try{
             inetSocketAddress = new InetSocketAddress(hostname, port);
             // 加载 ServerChannel 实例
-            ServerChannel serverChannel = serverChannelClass.getDeclaredConstructor(EventLoopGroup.class).newInstance(workers);
+            ServerChannel serverChannel = serverChannelClass.getDeclaredConstructor().newInstance();
             //serverChannel监听套接字
             serverChannel.bind(inetSocketAddress);
             //将serverChannel注册到selector
@@ -110,7 +110,7 @@ public class ServerBootstrap {
 
             // 3. 注册：将新连接移交给 Worker 线程组
             // 这一步会触发 worker 的 channelRegistered 事件
-            workers.register(socketChannel, SelectionKey.OP_ACCEPT);
+            workers.register(socketChannel, SelectionKey.OP_READ);
         }
 
         @Override

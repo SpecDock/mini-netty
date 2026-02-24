@@ -1,9 +1,6 @@
 package io.github.specdock.mininetty.channel.socket.nio;
 
-import io.github.specdock.mininetty.channel.ChannelHandler;
-import io.github.specdock.mininetty.channel.ChannelPipeline;
-import io.github.specdock.mininetty.channel.EventLoop;
-import io.github.specdock.mininetty.channel.EventLoopGroup;
+import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.util.InterestOpsUtil;
 
@@ -39,6 +36,7 @@ public class NioServerSocketChannel implements ServerSocketChannel {
         try {
             ssc = java.nio.channels.ServerSocketChannel.open();
             ssc.configureBlocking(false);
+            pipeline = new DefaultChannelPipeline(this);
         } catch (IOException e) {
             throw new RuntimeException(this.getClass().getName() + "开启失败", e);
         }
