@@ -47,13 +47,10 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
     // ------------------------------------------------- 入栈事件传播（向后传播）
     @Override
     public ChannelHandlerContext fireChannelRegistered() {
-        return null;
+        next.handler().channelRegistered(next);
+        return this;
     }
 
-    @Override
-    public ChannelHandlerContext fireChannelActive() {
-        return null;
-    }
 
     @Override
     public ChannelHandlerContext fireChannelRead(Object msg) {
@@ -66,10 +63,6 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
         return null;
     }
 
-    @Override
-    public ChannelHandlerContext fireExceptionCaught(Throwable cause) {
-        return null;
-    }
 
 
 
@@ -88,19 +81,21 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
     }
 
     @Override
-    public void write(Object msg) {
-
+    public void write(Object msg, Object promise) {
+        prev.handler().write(prev, msg, promise);
     }
 
     @Override
     public ChannelHandlerContext flush() {
-        return null;
+        prev.handler().flush(prev);
+        return this;
     }
 
 
     @Override
-    public void writeAndFlush(Object msg) {
-
+    public void writeAndFlush(Object msg, Object promise) {
+        write(msg, promise);
+        flush();
     }
 
     @Override

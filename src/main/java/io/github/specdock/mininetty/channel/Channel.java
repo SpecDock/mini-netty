@@ -1,6 +1,10 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
+
 import java.net.SocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 
@@ -23,4 +27,6 @@ public interface Channel {
     EventLoop getEventLoop();
 
     ChannelPipeline pipeline();
+
+    int read(ByteBuffer msg);
 }

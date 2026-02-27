@@ -1,5 +1,7 @@
 package io.github.specdock.mininetty.channel.socket.nio;
 
+import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.ChannelPipeline;
 import io.github.specdock.mininetty.channel.DefaultChannelPipeline;
 import io.github.specdock.mininetty.channel.EventLoop;
@@ -8,6 +10,7 @@ import io.github.specdock.mininetty.util.InterestOpsUtil;
 
 import java.io.IOException;
 import java.net.SocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 
@@ -79,4 +82,51 @@ public class NioSocketChannel implements SocketChannel {
     public ChannelPipeline pipeline(){
         return pipeline;
     }
+
+    @Override
+    public int read(ByteBuffer msg){
+        try {
+            return socketChannel.read(msg);
+        } catch (IOException e) {
+            throw new RuntimeException("java.nio.channels.SocketChannel的read方法出现异常", e);
+        }
+    }
+
+    @Override
+    public SocketAddress getRemoveAddress(){
+        try {
+            return socketChannel.getRemoteAddress();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public SocketAddress getLocalAddress() {
+        try {
+            return socketChannel.getLocalAddress();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

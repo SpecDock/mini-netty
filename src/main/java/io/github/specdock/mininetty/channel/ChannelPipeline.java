@@ -40,10 +40,6 @@ public interface ChannelPipeline {
 
     ChannelPipeline fireChannelReadComplete();
 
-    ChannelPipeline fireExceptionCaught(Throwable cause);
-
-    ChannelPipeline fireUserEventTriggered(Object event);
-
 
     // --- 出站事件请求 API (Outbound Events: 从 Tail 向 Head 传播) ---
     // TODO 待实现：之后将完成 Future 机制，现在用 void 作为返回值

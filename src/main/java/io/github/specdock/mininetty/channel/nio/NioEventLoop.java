@@ -1,11 +1,14 @@
 package io.github.specdock.mininetty.channel.nio;
 
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.Channel;
 import io.github.specdock.mininetty.channel.EventLoop;
 import io.github.specdock.mininetty.channel.ServerChannel;
+import io.github.specdock.mininetty.channel.socket.SocketChannel;
 import io.github.specdock.mininetty.util.concurrent.ScheduleTask;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.Iterator;
@@ -133,16 +136,30 @@ public class NioEventLoop implements EventLoop {
     @Override
     public void register(Channel channel, int interestOps) {
         if(this.thread == Thread.currentThread()){
-            channel.setEventLoop(this);
-            channel.register(selector, interestOps);
+            register0(channel, interestOps);
         }
         else {
             execute(() -> {
-                channel.setEventLoop(this);
-                channel.register(selector, interestOps);
+                register0(channel, interestOps);
             });
         }
     }
+    private void register0(Channel channel, int interestOps){
+        try {
+            // 1. 绑定 EventLoop 上下文
+            channel.setEventLoop(this);
+
+            // 2. 核心 JNI 调用：向底层 Selector 注册感兴趣的事件
+            // 注意：底层 NIO 的 register 方法会抛出 ClosedChannelException
+            channel.register(selector, interestOps);
+
+            // 3. 触发责任链的 Registered 生命周期
+            channel.pipeline().fireChannelRegistered();
+        }catch (Exception e){
+            throw new RuntimeException("NioEventLoop中的register0方法出现异常", e);
+        }
+    }
+
 
     @Override
     public Queue<ScheduleTask> getScheduleTaskQueue() {
@@ -230,35 +247,54 @@ public class NioEventLoop implements EventLoop {
                     // 手动移除 key
                     iterator.remove();
                     // 检查key是否有效
-                    if(!selectionKey.isValid()){
-                        continue;
-                    }
-                    if ((selectionKey.readyOps() & SelectionKey.OP_ACCEPT) != 0) {
-                        // 监听到OP_ACCEPT事件
-                        System.out.println("监听到OP_ACCEPT事件");
-                        ServerChannel serverChannel = (ServerChannel) selectionKey.attachment();
-                        serverChannel.pipeline().fireChannelRead(serverChannel);
-                    }
-                    if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
-                        // TODO channel针对读取事件的api
+                    try{
+                        if(!selectionKey.isValid()){
+                            continue;
+                        }
+                        if ((selectionKey.readyOps() & SelectionKey.OP_ACCEPT) != 0) {
+                            // 监听到OP_ACCEPT事件
+                            System.out.println("监听到OP_ACCEPT事件");
+                            ServerChannel serverChannel = (ServerChannel) selectionKey.attachment();
+                            serverChannel.pipeline().fireChannelRead(serverChannel);
+                        }
+                        if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
+                            // TODO channel针对读取事件的api
 
-                        System.out.println("监听到OP_READ事件");
-                        Thread.sleep(10000);
-                    }
-                    if((selectionKey.readyOps() & SelectionKey.OP_WRITE) != 0){
-                        // TODO 当写入时返回值 < length，注册一个OP_WRITE事件，当写入完后，应该要取消OP_WRITE事件
+                            System.out.println("监听到OP_READ事件");
+                            ByteBufChain msg = new ByteBufChain(true);
+                            SocketChannel socketChannel = (SocketChannel) selectionKey.attachment();
+                            int write = msg.write(socketChannel);
+                            socketChannel.pipeline().fireChannelRead(msg);
+                            if(write == -1){
+                                throw new RuntimeException(socketChannel.getRemoveAddress().toString() + "：断开连接");
+                            }
+                        }
+                        if((selectionKey.readyOps() & SelectionKey.OP_WRITE) != 0){
+                            // TODO 当写入时返回值 < length，注册一个OP_WRITE事件，当写入完后，应该要取消OP_WRITE事件
 
-                        System.out.println("监听到OP_WRITE事件");
-                    }
-                    if((selectionKey.readyOps() & SelectionKey.OP_CONNECT) != 0){
-                        // TODO 连接事件，当channel主动发出连接时，应该注册一个连接事件，后续应该完善 Future 的编写
+                            System.out.println("监听到OP_WRITE事件");
+                        }
+                        if((selectionKey.readyOps() & SelectionKey.OP_CONNECT) != 0){
+                            // TODO 连接事件，当channel主动发出连接时，应该注册一个连接事件，后续应该完善 Future 的编写
 
-                        System.out.println("监听到OP_CONNECT事件");
+                            System.out.println("监听到OP_CONNECT事件");
+                        }
+                    }catch (Exception e){
+                        System.err.println("处理单个 Channel 时发生异常，强制关闭该连接: " + e.getMessage());
+                        selectionKey.cancel();
+                        try{
+                            if(selectionKey.channel() != null){
+                                selectionKey.channel().close();
+                            }
+                        }catch (Exception ex){
+
+                        }
                     }
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(this.getClass().getName() + ":selectAndDisPatch, 发生了一次异常", e);
+            // 这里捕获的是 selector.select() 抛出的致命系统级异常，通常是底层 OS 资源耗尽
+            throw new RuntimeException("Selector 轮询发生系统级异常", e);
         }
     }
 

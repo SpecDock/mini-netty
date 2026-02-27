@@ -20,10 +20,8 @@ public interface ChannelHandlerContext {
 
     // ------- 入栈事件传播（向后传播）-------
     ChannelHandlerContext fireChannelRegistered();
-    ChannelHandlerContext fireChannelActive();
     ChannelHandlerContext fireChannelRead(Object msg);
     ChannelHandlerContext fireChannelReadComplete();
-    ChannelHandlerContext fireExceptionCaught(Throwable cause);
 
 
 
@@ -32,9 +30,9 @@ public interface ChannelHandlerContext {
     // TODO 待完成：还未实现 Future 机制，暂时先返回 void
     void bind(SocketAddress localAddress);
     void connect(SocketAddress remoteAddress);
-    void write(Object msg);
+    void write(Object msg, Object promise);
     ChannelHandlerContext flush();
-    void writeAndFlush(Object msg);
+    void writeAndFlush(Object msg, Object promise);
     void close();
 
 

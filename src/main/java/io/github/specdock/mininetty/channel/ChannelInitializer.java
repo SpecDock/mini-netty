@@ -8,4 +8,35 @@ package io.github.specdock.mininetty.channel;
 public abstract class ChannelInitializer<C extends Channel> implements ChannelHandler {
 
     protected abstract void initChannel(C ch) throws Exception;
+
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        System.out.println("ChannelInitializer");
+        ctx.fireChannelRead(msg);
+    }
+
+    @Override
+    public void channelRegistered(ChannelHandlerContext ctx) {
+        try {
+            System.out.println("-------------------------开始执行ChannelInitializer的channelRegistered方法");
+            C channel = (C) ctx.channel();
+            initChannel(channel);
+            ctx.pipeline().remove(this);
+            ctx.fireChannelRegistered();
+            System.out.println("-------------------------ChannelInitializer执行完毕，已移除");
+        } catch (Exception e) {
+            throw new RuntimeException("ChannelInitializer的channelRegistered方法出现异常", e);
+        }
+
+    }
+
+    @Override
+    public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+        ctx.write(msg, promise);
+    }
+
+    @Override
+    public void flush(ChannelHandlerContext ctx) {
+        ctx.flush();
+    }
 }
