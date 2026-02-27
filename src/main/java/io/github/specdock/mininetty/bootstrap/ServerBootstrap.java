@@ -117,6 +117,16 @@ public class ServerBootstrap {
         public void channelRegistered(ChannelHandlerContext ctx) {
             ctx.fireChannelRegistered();
         }
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+            ctx.write(msg, promise);
+        }
+
+        @Override
+        public void flush(ChannelHandlerContext ctx) {
+            ctx.flush();
+        }
     }
 
 }

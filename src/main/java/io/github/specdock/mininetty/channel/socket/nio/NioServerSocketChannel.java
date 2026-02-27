@@ -1,12 +1,13 @@
 package io.github.specdock.mininetty.channel.socket.nio;
 
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.util.InterestOpsUtil;
 
 import java.io.IOException;
 import java.net.SocketAddress;
-import java.nio.channels.ClosedChannelException;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -124,5 +125,8 @@ public class NioServerSocketChannel implements ServerSocketChannel {
         return eventLoop;
     }
 
-
+    @Override
+    public int read(ByteBuffer msg) {
+        return 0;
+    }
 }

@@ -23,9 +23,8 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         tail.prev = head;
     }
 
-
     @Override
-    public ChannelPipeline addFirst(ChannelHandler handler) {
+    public ChannelPipeline addLast(ChannelHandler handler) {
         DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
         // 插入到tail节点前面
         context.next = tail;
@@ -36,7 +35,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
     @Override
-    public ChannelPipeline addLast(ChannelHandler handler) {
+    public ChannelPipeline addFirst(ChannelHandler handler) {
         DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
         // 插入到head节点后面
         context.prev = head;
@@ -69,7 +68,8 @@ public class DefaultChannelPipeline implements ChannelPipeline{
      */
     @Override
     public ChannelPipeline fireChannelRegistered() {
-        return null;
+        head.fireChannelRegistered();
+        return this;
     }
 
     @Override
@@ -92,17 +92,6 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
 
-    // TODO
-    @Override
-    public ChannelPipeline fireExceptionCaught(Throwable cause) {
-        return null;
-    }
-
-    // TODO
-    @Override
-    public ChannelPipeline fireUserEventTriggered(Object event) {
-        return null;
-    }
 
     @Override
     public void bind(SocketAddress localAddress) {
@@ -141,7 +130,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
     @Override
     public Channel channel() {
-        return null;
+        return channel;
     }
 
     @Override
@@ -176,6 +165,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) {
 
+            ctx.fireChannelRegistered();
         }
 
         @Override
@@ -188,6 +178,16 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         public ChannelHandler handler() {
             return this;
         }
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+            ctx.write(msg, promise);
+        }
+
+        @Override
+        public void flush(ChannelHandlerContext ctx) {
+            ctx.flush();
+        }
     }
 
     private static class TailContext extends AbstractChannelHandlerContext implements ChannelOutboundHandler, ChannelInboundHandler{
@@ -199,7 +199,7 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) {
-
+            // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
         }
 
         @Override
@@ -211,6 +211,16 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         @Override
         public ChannelHandler handler() {
             return this;
+        }
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+            ctx.write(msg, promise);
+        }
+
+        @Override
+        public void flush(ChannelHandlerContext ctx) {
+            ctx.flush();
         }
     }
 
