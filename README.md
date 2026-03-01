@@ -37,7 +37,7 @@ TCP 背压控制 (Backpressure)：针对 OP_WRITE 缓冲区满载场景，实现
 服务端启动示例 (ServerBootstrap)
 仅需寥寥数行代码，即可启动一个具备完整解码、编码及业务处理能力的非阻塞服务端：
 
-Java
+```java
 public class ServerBootstrapTest {
     public static void main(String[] args) {
         ServerBootstrap serverBootstrap = new ServerBootstrap();
@@ -65,10 +65,11 @@ public class ServerBootstrapTest {
                 .bind(8080);
     }
 }
+```
 客户端启动示例 (Bootstrap)
 支持异步非阻塞的连接建立与定时心跳/业务数据推送：
 
-Java
+```java
 public class BootstrapTest {
     public static void main(String[] args) {
         Bootstrap bootstrap = new Bootstrap();
@@ -91,7 +92,7 @@ public class BootstrapTest {
                     }
                 });
 
-        // 异步发起连接，利用 Future 监听握手状态
+         // 异步发起连接，利用 Future 监听握手状态
         Future connect = bootstrap.connect(new InetSocketAddress("127.0.0.1", 8080));
         connect.addListener(future -> {
             if(future.isSuccess()){
@@ -105,7 +106,9 @@ public class BootstrapTest {
         });
     }
 }
+```
 👨‍💻 关于作者
+
 开发者: SpecDock
 
 定位: 专注于底层基础架构建设、高并发微服务设计与 Java 后端开发。
