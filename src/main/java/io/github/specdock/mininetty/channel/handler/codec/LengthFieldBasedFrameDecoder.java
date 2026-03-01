@@ -4,6 +4,9 @@ import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.ChannelHandler;
 import io.github.specdock.mininetty.channel.ChannelHandlerContext;
 import io.github.specdock.mininetty.channel.ChannelInboundHandler;
+import io.github.specdock.mininetty.channel.DefaultChannelPromise;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.util.LinkedList;
 
@@ -14,7 +17,7 @@ import java.util.LinkedList;
  */
 public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler {
     private final int lengthFieldLength;
-    private LinkedList<ByteBufChain> byteBufChainList;
+    private final LinkedList<ByteBufChain> byteBufChainList;
     private int lengthField;
     private byte[] target;
     private int lengthFieldOffset;
@@ -117,8 +120,15 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler {
     }
 
     @Override
-    public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+    public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
+        return ctx.write(msg, promise);
+    }
+
+    @Override
+    public Future write(ChannelHandlerContext ctx, Object msg) {
+        Promise promise = new DefaultChannelPromise();
         ctx.write(msg, promise);
+        return promise;
     }
 
     @Override

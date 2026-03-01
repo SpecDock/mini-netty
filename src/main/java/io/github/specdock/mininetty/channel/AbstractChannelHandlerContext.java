@@ -1,6 +1,10 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 import java.net.SocketAddress;
+import java.nio.ByteBuffer;
 
 /**
  * @author specdock
@@ -81,8 +85,9 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
     }
 
     @Override
-    public void write(Object msg, Object promise) {
+    public Future write(Object msg, Promise promise) {
         prev.handler().write(prev, msg, promise);
+        return promise;
     }
 
     @Override
@@ -93,14 +98,11 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
 
 
     @Override
-    public void writeAndFlush(Object msg, Object promise) {
+    public Future writeAndFlush(Object msg, Promise promise) {
         write(msg, promise);
         flush();
+        return promise;
     }
 
-    @Override
-    public void close() {
-
-    }
 
 }

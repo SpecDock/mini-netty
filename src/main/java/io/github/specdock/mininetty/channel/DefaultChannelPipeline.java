@@ -1,5 +1,8 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 import java.net.SocketAddress;
 
 /**
@@ -104,23 +107,27 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
     @Override
-    public void write(Object msg) {
-
+    public Future write(Object msg) {
+        Promise promise = new DefaultChannelPromise();
+        tail.write(msg, promise);
+        return promise;
     }
 
     @Override
     public ChannelPipeline flush() {
-        return null;
+        tail.flush();
+        return this;
     }
 
     @Override
     public void writeAndFlush(Object msg) {
-
+        write(msg);
+        flush();
     }
 
     @Override
     public void close() {
-
+        channel.close();
     }
 
     @Override
@@ -134,23 +141,45 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
     @Override
-    public ChannelHandlerContext context(String name) {
+    public ChannelHandlerContext context(String fullyQualifiedClassName) {
+        AbstractChannelHandlerContext index = head.next;
+        while(index != tail){
+            String name = index.handler().getClass().getName();
+            if(name.equals(fullyQualifiedClassName)){
+                return index;
+            }
+            index = index.next;
+        }
         return null;
     }
 
     @Override
     public ChannelHandlerContext context(ChannelHandler handler) {
+        AbstractChannelHandlerContext index = head.next;
+        while(index != tail){
+            ChannelHandler channelHandler = index.handler();
+            if(channelHandler == handler){
+                return index;
+            }
+            index = index.next;
+        }
         return null;
     }
 
     @Override
     public ChannelHandler first() {
-        return null;
+        if(head.next == tail){
+            return null;
+        }
+        return head.next.handler();
     }
 
     @Override
     public ChannelHandler last() {
-        return null;
+        if(tail.prev == head){
+            return null;
+        }
+        return tail.prev.handler();
     }
 
 
@@ -180,13 +209,35 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         }
 
         @Override
-        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
-            ctx.write(msg, promise);
+        public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
+            System.out.println("HeadContext");
+            if(executor().inEventLoop()){
+                channel().channelOutboundBuffer().writeToBuffer(msg, promise);
+            }
+            else {
+                executor().execute(() -> {
+                    channel().channelOutboundBuffer().writeToBuffer(msg, promise);
+                });
+            }
+            return promise;
+        }
+
+        @Override
+        public Future write(ChannelHandlerContext ctx, Object msg) {
+            Promise promise = new DefaultChannelPromise();
+            return write(msg, promise);
         }
 
         @Override
         public void flush(ChannelHandlerContext ctx) {
-            ctx.flush();
+            if(executor().inEventLoop()){
+                channel().channelOutboundBuffer().flush();
+            }
+            else {
+                executor().execute(() -> {
+                    channel().channelOutboundBuffer().flush();
+                });
+            }
         }
     }
 
@@ -214,8 +265,16 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         }
 
         @Override
-        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+        public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
             ctx.write(msg, promise);
+            return promise;
+        }
+
+        @Override
+        public Future write(ChannelHandlerContext ctx, Object msg) {
+            Promise promise = new DefaultChannelPromise();
+            ctx.write(msg, promise);
+            return promise;
         }
 
         @Override

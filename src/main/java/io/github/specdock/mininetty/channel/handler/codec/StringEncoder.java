@@ -2,6 +2,11 @@ package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.channel.ChannelHandlerContext;
 import io.github.specdock.mininetty.channel.ChannelOutboundHandler;
+import io.github.specdock.mininetty.channel.DefaultChannelPromise;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * @author specdock
@@ -16,13 +21,21 @@ public class StringEncoder implements ChannelOutboundHandler {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        System.out.println("StringEncoder");
         ctx.fireChannelRead(msg);
     }
 
     @Override
-    public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
-        ctx.write(msg, promise);
+    public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
+        System.out.println("StringEncoder");
+        String s = (String) msg;
+        ctx.write(s.getBytes(StandardCharsets.UTF_8), promise);
+        return promise;
+    }
+
+    @Override
+    public Future write(ChannelHandlerContext ctx, Object msg) {
+        Promise promise = new DefaultChannelPromise();
+        return write(ctx, msg, promise);
     }
 
     @Override

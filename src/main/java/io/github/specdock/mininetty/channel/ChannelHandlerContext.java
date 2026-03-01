@@ -1,5 +1,8 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 import java.net.SocketAddress;
 
 /**
@@ -30,10 +33,9 @@ public interface ChannelHandlerContext {
     // TODO 待完成：还未实现 Future 机制，暂时先返回 void
     void bind(SocketAddress localAddress);
     void connect(SocketAddress remoteAddress);
-    void write(Object msg, Object promise);
+    Future write(Object msg, Promise promise);
     ChannelHandlerContext flush();
-    void writeAndFlush(Object msg, Object promise);
-    void close();
+    Future writeAndFlush(Object msg, Promise promise);
 
 
 

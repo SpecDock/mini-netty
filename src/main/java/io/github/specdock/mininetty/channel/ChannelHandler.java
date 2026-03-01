@@ -1,5 +1,8 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 /**
  * @author specdock
  * @Date 2026/1/15
@@ -10,8 +13,10 @@ public interface ChannelHandler {
 
     public void channelRead(ChannelHandlerContext ctx, Object msg);
 
-    // TODO 还没构建好Future，构建好后将promise的类型改为ChannelPromise
-    public void write(ChannelHandlerContext ctx, Object msg, Object promise);
+
+    public Future write(ChannelHandlerContext ctx, Object msg, Promise promise);
+
+    public Future write(ChannelHandlerContext ctx, Object msg);
 
     public void flush(ChannelHandlerContext ctx);
 

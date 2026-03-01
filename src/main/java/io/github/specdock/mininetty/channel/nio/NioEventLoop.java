@@ -2,9 +2,12 @@ package io.github.specdock.mininetty.channel.nio;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.Channel;
+import io.github.specdock.mininetty.channel.DefaultChannelPromise;
 import io.github.specdock.mininetty.channel.EventLoop;
 import io.github.specdock.mininetty.channel.ServerChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
 import io.github.specdock.mininetty.util.concurrent.ScheduleTask;
 
 import java.io.IOException;
@@ -45,16 +48,6 @@ public class NioEventLoop implements EventLoop {
 
         taskQueue = new ArrayBlockingQueue<>(1024);
         scheduleTaskQueue = new PriorityBlockingQueue<>(1024);
-
-
-
-
-
-
-
-
-
-
         this.thread = new NioEventLoopThread("io-github-specdock-mininetty-eventLoop-thread" + THREAD_NAME_INDEX.getAndIncrement());
         this.thread.start();
         System.out.println("成功启动一个EventLoop");
@@ -134,24 +127,33 @@ public class NioEventLoop implements EventLoop {
 
 
     @Override
-    public void register(Channel channel, int interestOps) {
-        if(this.thread == Thread.currentThread()){
-            register0(channel, interestOps);
+    public Future register(Channel channel, int interestOps) {
+        Promise promise = new DefaultChannelPromise();
+        register(channel, interestOps, promise);
+        return promise;
+    }
+
+    @Override
+    public Future register(Channel channel, int interestOps, Promise promise) {
+        if(inEventLoop()){
+            register0(channel, interestOps, promise);
         }
         else {
             execute(() -> {
-                register0(channel, interestOps);
+                register0(channel, interestOps, promise);
             });
         }
+        return promise;
     }
-    private void register0(Channel channel, int interestOps){
+
+    private void register0(Channel channel, int interestOps, Promise promise){
         try {
             // 1. 绑定 EventLoop 上下文
             channel.setEventLoop(this);
 
             // 2. 核心 JNI 调用：向底层 Selector 注册感兴趣的事件
             // 注意：底层 NIO 的 register 方法会抛出 ClosedChannelException
-            channel.register(selector, interestOps);
+            channel.register(selector, interestOps, promise);
 
             // 3. 触发责任链的 Registered 生命周期
             channel.pipeline().fireChannelRegistered();
@@ -166,14 +168,10 @@ public class NioEventLoop implements EventLoop {
         return scheduleTaskQueue;
     }
 
-
-
-
-
-
-
-
-
+    @Override
+    public boolean inEventLoop() {
+        return thread == Thread.currentThread();
+    }
 
     /**
      * TODO 待实现：分配 50% 的时间给定时任务和普通任务，另外 50% 的事件用来select()监听
@@ -258,7 +256,6 @@ public class NioEventLoop implements EventLoop {
                             serverChannel.pipeline().fireChannelRead(serverChannel);
                         }
                         if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
-                            // TODO channel针对读取事件的api
 
                             System.out.println("监听到OP_READ事件");
                             ByteBufChain msg = new ByteBufChain(true);
@@ -270,14 +267,16 @@ public class NioEventLoop implements EventLoop {
                             }
                         }
                         if((selectionKey.readyOps() & SelectionKey.OP_WRITE) != 0){
-                            // TODO 当写入时返回值 < length，注册一个OP_WRITE事件，当写入完后，应该要取消OP_WRITE事件
 
                             System.out.println("监听到OP_WRITE事件");
+                            SocketChannel socketChannel = (SocketChannel) selectionKey.attachment();
+                            socketChannel.channelOutboundBuffer().flush();
                         }
                         if((selectionKey.readyOps() & SelectionKey.OP_CONNECT) != 0){
-                            // TODO 连接事件，当channel主动发出连接时，应该注册一个连接事件，后续应该完善 Future 的编写
 
                             System.out.println("监听到OP_CONNECT事件");
+                            SocketChannel socketChannel = (SocketChannel) selectionKey.attachment();
+                            socketChannel.finishConnect();
                         }
                     }catch (Exception e){
                         System.err.println("处理单个 Channel 时发生异常，强制关闭该连接: " + e.getMessage());

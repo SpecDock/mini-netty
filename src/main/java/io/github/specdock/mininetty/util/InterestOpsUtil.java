@@ -18,6 +18,8 @@ public class InterestOpsUtil {
                 return "OP_WRITE";
             case SelectionKey.OP_CONNECT:
                 return "OP_CONNECT";
+            case 0:
+                return "无";
         }
         return null;
     }
