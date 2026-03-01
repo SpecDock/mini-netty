@@ -1,8 +1,11 @@
 package io.github.specdock.mininetty.channel.nio;
 
 import io.github.specdock.mininetty.channel.Channel;
+import io.github.specdock.mininetty.channel.DefaultChannelPromise;
 import io.github.specdock.mininetty.channel.EventLoop;
 import io.github.specdock.mininetty.channel.EventLoopGroup;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,8 +51,15 @@ public class NioEventLoopGroup implements EventLoopGroup {
       * @param interestOps
       */
      @Override
-     public void register(Channel channel, int interestOps) {
-          next().register(channel, interestOps);
+     public Future register(Channel channel, int interestOps) {
+          Promise promise = new DefaultChannelPromise();
+          return register(channel, interestOps, promise);
+     }
+
+     @Override
+     public Future register(Channel channel, int interestOps, Promise promise) {
+          next().register(channel, interestOps, promise);
+          return promise;
      }
 
      /**

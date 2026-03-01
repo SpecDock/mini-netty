@@ -17,11 +17,11 @@ public class ByteBuf {
 
     public ByteBuf(ByteBuffer byteBuffer){
         this.byteBuffer = byteBuffer;
-        writeIndex = 0;
+        writeIndex = byteBuffer.position();
         readIndex = 0;
     }
 
-    public int write(SocketChannel socketChannel){
+    public int writeFromChannel(SocketChannel socketChannel){
         byteBuffer.position(writeIndex);
         byteBuffer.limit(byteBuffer.capacity());
         int read = socketChannel.read(byteBuffer);
@@ -50,4 +50,13 @@ public class ByteBuf {
     public int writableBytes(){
         return byteBuffer.capacity() - writeIndex;
     }
+
+    public int writeToChannel(SocketChannel socketChannel){
+        byteBuffer.position(readIndex);
+        byteBuffer.limit(writeIndex);
+        int read = socketChannel.write(byteBuffer);
+        readIndex = byteBuffer.position();
+        return read;
+    }
+
 }

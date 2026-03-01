@@ -1,5 +1,8 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -17,5 +20,7 @@ public interface EventLoopGroup {
     EventLoop next();
 
 
-    void register(Channel channel, int interestOps);
+    Future register(Channel channel, int interestOps);
+
+    Future register(Channel channel, int interestOps, Promise promise);
 }

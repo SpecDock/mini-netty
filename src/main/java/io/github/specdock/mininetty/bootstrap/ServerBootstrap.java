@@ -4,6 +4,8 @@ package io.github.specdock.mininetty.bootstrap;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.net.InetSocketAddress;
 import java.nio.channels.SelectionKey;
@@ -21,7 +23,7 @@ public class ServerBootstrap {
     private InetSocketAddress inetSocketAddress;
 
     // boss 的 单个EventLoop 里的Channel类
-    private Class<? extends ServerChannel> serverChannelClass;
+    private Class<? extends ServerSocketChannel> serverChannelClass;
 
     // boss里的Channel的Handler
     private ChannelHandler handler;
@@ -39,7 +41,7 @@ public class ServerBootstrap {
         return this;
     }
 
-    public ServerBootstrap channel(Class<? extends ServerChannel> channelClass){
+    public ServerBootstrap channel(Class<? extends ServerSocketChannel> channelClass){
         serverChannelClass = channelClass;
         return this;
     }
@@ -100,6 +102,8 @@ public class ServerBootstrap {
 
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            System.out.println("ServerBootstrapAcceptor");
+
             // 1. 类型转换：对于 ServerChannel 来说，读取到的 msg 就是新连接
             ServerSocketChannel serverSocketChannel = (ServerSocketChannel) msg;
             SocketChannel socketChannel = serverSocketChannel.accept();
@@ -119,8 +123,16 @@ public class ServerBootstrap {
         }
 
         @Override
-        public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+        public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
             ctx.write(msg, promise);
+            return promise;
+        }
+
+        @Override
+        public Future write(ChannelHandlerContext ctx, Object msg) {
+            Promise promise = new DefaultChannelPromise();
+            ctx.write(msg, promise);
+            return promise;
         }
 
         @Override

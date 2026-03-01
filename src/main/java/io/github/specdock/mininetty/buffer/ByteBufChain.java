@@ -14,7 +14,7 @@ import java.util.List;
  * @Time 21:15
  */
 public class ByteBufChain {
-    private final static int DEFAULT_CHUNK_SIZE = 100;
+    private final static int DEFAULT_CHUNK_SIZE = 1024;
 
     private LinkedList<ByteBuf> bufferChain;
     private int chunkSize;
@@ -77,7 +77,7 @@ public class ByteBufChain {
         int sum = 0;
         for(int i = 0; i < 16; i++){
             ByteBuf buf = getLastWritableBuf();
-            int write = buf.write(socketChannel);
+            int write = buf.writeFromChannel(socketChannel);
             if(write == -1){
                 return -1;
             }

@@ -4,6 +4,8 @@ import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.util.InterestOpsUtil;
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -59,10 +61,55 @@ public class NioServerSocketChannel implements ServerSocketChannel {
     }
 
     @Override
-    public void connect(SocketAddress remote) {
-
+    public Future connect(SocketAddress remote, Promise promise) {
+            return null;
     }
 
+    @Override
+    public Future close() {
+        Promise promise = new DefaultChannelPromise();
+        if(eventLoop.inEventLoop()){
+            doClose(promise);
+        }
+        else {
+            eventLoop.execute(() -> doClose(promise));
+        }
+        return promise;
+    }
+
+    private void doClose(Promise promise) {
+        try {
+            // 1. 幂等性校验：若已关闭则直接返回成功
+            if (!ssc.isOpen()) {
+                promise.setSuccess();
+                return;
+            }
+
+            // 2. 取消多路复用器的注册关系
+            if (selectionKey != null) {
+                selectionKey.cancel();
+            }
+
+            // 3. 执行物理关闭（释放文件描述符）
+            ssc.close();
+
+            // 4. 核销 Promise 凭证
+            promise.setSuccess();
+
+        } catch (IOException e) {
+            // 物理关闭异常反馈
+            promise.setFailure(e);
+        }
+    }
+
+
+
+
+    @Override
+    public void register(Selector selector, int interestOps) {
+        Promise promise = new DefaultChannelPromise();
+        register(selector, interestOps, promise);
+    }
 
     /**
      * 将此channel注册到selector
@@ -72,13 +119,27 @@ public class NioServerSocketChannel implements ServerSocketChannel {
      * @param interestOps
      */
     @Override
-    public void register(Selector selector, int interestOps) {
+    public void register(Selector selector, int interestOps, Promise promise) {
         try {
             this.selectionKey = ssc.register(selector, interestOps);
-            this.selectionKey.attach(this);
+            selectionKey.attach(this);
+            promise.setSuccess();
             System.out.println(ssc.getLocalAddress().toString() + "---成功注册" + InterestOpsUtil.interestOpsToString(interestOps) + "事件到---" + Thread.currentThread().getName() + "的selector");
         } catch (Exception e) {
-            throw new RuntimeException(this.getClass().getName() + "注册失败", e);
+            throw new RuntimeException(ssc.getClass().getName() + "注册失败", e);
+        }
+    }
+
+    @Override
+    public void unregister(int interestOps){
+        if(!selectionKey.isValid()){
+            return;
+        }
+        try {
+            selectionKey.interestOps(selectionKey.interestOps() & ~interestOps);
+            System.out.println(ssc.getLocalAddress().toString() + "---已注销" + InterestOpsUtil.interestOpsToString(interestOps) + "事件");
+        } catch (Exception e) {
+            throw new RuntimeException(ssc.getClass().getName() + "注销失败", e);
         }
     }
 
@@ -128,5 +189,10 @@ public class NioServerSocketChannel implements ServerSocketChannel {
     @Override
     public int read(ByteBuffer msg) {
         return 0;
+    }
+
+    @Override
+    public ChannelOutboundBuffer channelOutboundBuffer() {
+        return null;
     }
 }

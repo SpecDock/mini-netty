@@ -1,5 +1,7 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+
 import java.net.SocketAddress;
 
 /**
@@ -51,7 +53,7 @@ public interface ChannelPipeline {
     /**
      * 将消息写入缓冲区，返回代表异步 IO 结果的 Future
      */
-    void write(Object msg);
+    Future write(Object msg);
 
     /**
      * 冲刷缓冲区，将数据写入 Socket 发送缓冲区

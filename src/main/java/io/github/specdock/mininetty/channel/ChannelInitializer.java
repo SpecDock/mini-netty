@@ -1,5 +1,8 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.util.concurrent.Future;
+import io.github.specdock.mininetty.util.concurrent.Promise;
+
 /**
  * @author specdock
  * @Date 2026/1/18
@@ -31,8 +34,16 @@ public abstract class ChannelInitializer<C extends Channel> implements ChannelHa
     }
 
     @Override
-    public void write(ChannelHandlerContext ctx, Object msg, Object promise) {
+    public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
         ctx.write(msg, promise);
+        return promise;
+    }
+
+    @Override
+    public Future write(ChannelHandlerContext ctx, Object msg) {
+        Promise promise = new DefaultChannelPromise();
+        ctx.write(msg, promise);
+        return promise;
     }
 
     @Override
