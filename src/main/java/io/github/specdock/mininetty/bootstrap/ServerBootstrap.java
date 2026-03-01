@@ -66,6 +66,7 @@ public class ServerBootstrap {
      */
     public void bind(String hostname, int port){
         try{
+
             inetSocketAddress = new InetSocketAddress(hostname, port);
             // 加载 ServerChannel 实例
             ServerChannel serverChannel = serverChannelClass.getDeclaredConstructor().newInstance();
@@ -77,6 +78,15 @@ public class ServerBootstrap {
             //将给worker添加childHandler的Handler添加到serverChannel的pipeline
             ServerBootstrapAcceptor serverBootstrapAcceptor = new ServerBootstrapAcceptor(workers, childHandler);
             serverChannel.pipeline().addLast(serverBootstrapAcceptor);
+
+
+            System.out.println("" +
+                    " __  __ _       _          _   _      _   _         \n" +
+                    "|  \\/  (_)_ __ (_)        | \\ | | ___| |_| |_ _   _ \n" +
+                    "| |\\/| | | '_ \\| |  ____  |  \\| |/ _ \\ __| __| | | |\n" +
+                    "| |  | | | | | | | |____| | |\\  |  __/ |_| |_| |_| |\n" +
+                    "|_|  |_|_|_| |_|_|        |_| \\_|\\___|\\__|\\__|\\__, |\n" +
+                    "                                              |___/");
 
 
         } catch (Exception e) {
