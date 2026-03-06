@@ -58,7 +58,7 @@ public class BootstrapTest {
                 eventExecutors.scheduleAtFixedRate(() -> {
                     System.out.println(">> 定时任务已触发，准备将数据压入 Pipeline");
                     connect.channel().pipeline().writeAndFlush("你好，我是客户端");
-                }, 0, 5, TimeUnit.SECONDS);
+                }, 0, 10, TimeUnit.MILLISECONDS);
             }
             else {
                 System.out.println("连接失败");
