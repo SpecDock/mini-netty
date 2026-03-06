@@ -14,7 +14,7 @@ import java.util.List;
  * @Time 21:15
  */
 public class ByteBufChain {
-    private final static int DEFAULT_CHUNK_SIZE = 1024;
+    private final static int DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
     private LinkedList<ByteBuf> bufferChain;
     private int chunkSize;
@@ -40,6 +40,7 @@ public class ByteBufChain {
         while(length > 0){
             ByteBuf buf = bufferChain.getFirst();
             if(buf.readableBytes() <= 0){
+                buf.release();
                 bufferChain.remove(0);
                 continue;
             }
