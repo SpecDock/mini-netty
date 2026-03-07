@@ -14,33 +14,35 @@ import java.util.List;
  * @Time 21:15
  */
 public class ByteBufChain {
-    private final static int DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
     private LinkedList<ByteBuf> bufferChain;
-    private int chunkSize;
     private boolean isDirect;
+    private final PooledByteBufAllocator allocator;
+    private final int chunkSize;
 
 
 
-    public ByteBufChain(int chunkSize, boolean isDirect){
+    public ByteBufChain(boolean isDirect, PooledByteBufAllocator allocator){
         bufferChain = new LinkedList<>();
-        this.chunkSize = chunkSize;
         this.isDirect = isDirect;
+        this.allocator = allocator;
+        this.chunkSize = allocator.bufferSize();
     }
+
 
     public ByteBufChain(boolean isDirect){
-        this(DEFAULT_CHUNK_SIZE, isDirect);
+        this(isDirect, new PooledByteBufAllocator());
     }
 
-    public LinkedList<ByteBuf> getBufferChain(){
-        return bufferChain;
-    }
+
+
+    
 
     public void read(byte[] target, int offset, int length){
         while(length > 0){
             ByteBuf buf = bufferChain.getFirst();
             if(buf.readableBytes() <= 0){
-                buf.release();
+                allocator.recycle(buf);
                 bufferChain.remove(0);
                 continue;
             }
@@ -53,12 +55,8 @@ public class ByteBufChain {
 
 
     private void creatLast(){
-        if(isDirect){
-            bufferChain.addLast(new ByteBuf(ByteBuffer.allocateDirect(chunkSize)));
-        }
-        else {
-            bufferChain.addLast(new ByteBuf(ByteBuffer.allocate(chunkSize)));
-        }
+        ByteBuf buf = allocator.allocate(isDirect);
+        bufferChain.addLast(buf);
     }
 
     private ByteBuf getLastWritableBuf(){
@@ -108,6 +106,16 @@ public class ByteBufChain {
             sum += buf.readableBytes();
         }
         return sum;
+    }
+
+    /**
+     * 释放所有的ByteBuf到池中
+     */
+    public void recycle() {
+        for(ByteBuf buf : bufferChain){
+            allocator.recycle(buf);
+        }
+        bufferChain.clear();
     }
 
 
