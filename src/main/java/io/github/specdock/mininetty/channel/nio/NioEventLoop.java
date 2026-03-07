@@ -1,6 +1,7 @@
 package io.github.specdock.mininetty.channel.nio;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
+import io.github.specdock.mininetty.buffer.PooledByteBufAllocator;
 import io.github.specdock.mininetty.channel.Channel;
 import io.github.specdock.mininetty.channel.DefaultChannelPromise;
 import io.github.specdock.mininetty.channel.EventLoop;
@@ -34,6 +35,7 @@ public class NioEventLoop implements EventLoop {
     private final Thread thread;
     private final PriorityBlockingQueue<ScheduleTask> scheduleTaskQueue;
     private final BlockingQueue<Runnable> taskQueue;
+    private final PooledByteBufAllocator allocator;
 
 
     /**
@@ -48,6 +50,7 @@ public class NioEventLoop implements EventLoop {
 
         taskQueue = new ArrayBlockingQueue<>(1024);
         scheduleTaskQueue = new PriorityBlockingQueue<>(1024);
+        allocator = new PooledByteBufAllocator();
         this.thread = new NioEventLoopThread("io-github-specdock-mininetty-eventLoop-thread" + THREAD_NAME_INDEX.getAndIncrement());
         this.thread.start();
         System.out.println("成功启动一个EventLoop");
@@ -258,7 +261,7 @@ public class NioEventLoop implements EventLoop {
                         if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
 
                             System.out.println("监听到OP_READ事件");
-                            ByteBufChain msg = new ByteBufChain(true);
+                            ByteBufChain msg = new ByteBufChain(true, allocator);
                             SocketChannel socketChannel = (SocketChannel) selectionKey.attachment();
                             int write = msg.write(socketChannel);
                             socketChannel.pipeline().fireChannelRead(msg);

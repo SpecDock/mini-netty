@@ -128,11 +128,20 @@ public class ByteBuf {
         return read;
     }
 
+    public void reset(){
+        readIndex = 0;
+        writeIndex = 0;
+    }
+
     public void release() {
         // 利用 CAS 操作，确保底层物理清理只执行一次
         if (isReleased.compareAndSet(false, true)) {
             releaseNative(this.byteBuffer);
         }
+    }
+
+    public boolean isDirect(){
+        return byteBuffer.isDirect();
     }
 
     private static void releaseNative(ByteBuffer buffer) {
