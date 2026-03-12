@@ -19,6 +19,16 @@ public abstract class ChannelInitializer<C extends Channel> implements ChannelHa
     }
 
     @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        ctx.fireChannelActive();
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        ctx.fireChannelInactive();
+    }
+
+    @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
         try {
             System.out.println("-------------------------开始执行ChannelInitializer的channelRegistered方法");

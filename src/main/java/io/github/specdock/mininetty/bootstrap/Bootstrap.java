@@ -1,14 +1,17 @@
 package io.github.specdock.mininetty.bootstrap;
 
 import io.github.specdock.mininetty.channel.*;
+import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameEncoder;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
+import io.github.specdock.mininetty.util.HeartbeatConstant;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author specdock
@@ -75,6 +78,26 @@ public class Bootstrap {
                     "| |  | | | | | | | |____| | |\\  |  __/ |_| |_| |_| |\n" +
                     "|_|  |_|_|_| |_|_|        |_| \\_|\\___|\\__|\\__|\\__, |\n" +
                     "                                              |___/");
+
+            promise.addListener(future1 -> {
+                if(future1.isSuccess()){
+                    System.out.println("成功连接");
+                    EventLoop eventExecutors = future1.channel().getEventLoop();
+
+                    ChannelHandlerContext context = future1.channel().pipeline().filterContext(channelHandler -> {
+                        Class<?> handlerClass = channelHandler.getClass();
+                        return handlerClass.isAnnotationPresent(FrameEncoder.class);
+                    });
+
+                    eventExecutors.scheduleAtFixedRate(() -> {
+                        context.handler().write(context, new byte[0]);
+                        context.handler().flush(context);
+                    }, 0, HeartbeatConstant.HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+                }
+                else {
+                    System.out.println("连接失败");
+                }
+            });
 
             return promise;
 

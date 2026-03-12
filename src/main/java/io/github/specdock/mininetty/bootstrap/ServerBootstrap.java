@@ -120,9 +120,13 @@ public class ServerBootstrap {
 
             // 2. ★ 核心动作：将用户配置的 childHandler 加入新连接的 Pipeline
             // 注意：这里不需要管它是 Initializer 还是普通 Handler，直接 addLast 即可
-            socketChannel.pipeline().addLast(childHandler);
+            socketChannel.pipeline()
+                    .addLast(new HeartbeatHandler())
+                    .addLast(childHandler);
 
-            // 3. 注册：将新连接移交给 Worker 线程组
+
+
+            // 4. 注册：将新连接移交给 Worker 线程组
             // 这一步会触发 worker 的 channelRegistered 事件
             workers.register(socketChannel, SelectionKey.OP_READ);
         }
@@ -130,6 +134,16 @@ public class ServerBootstrap {
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) {
             ctx.fireChannelRegistered();
+        }
+
+        @Override
+        public void channelActive(ChannelHandlerContext ctx) {
+            ctx.fireChannelActive();
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            ctx.fireChannelInactive();
         }
 
         @Override

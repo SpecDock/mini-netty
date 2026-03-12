@@ -23,6 +23,8 @@ public interface ChannelHandlerContext {
 
     // ------- 入栈事件传播（向后传播）-------
     ChannelHandlerContext fireChannelRegistered();
+    ChannelHandlerContext fireChannelActive();
+    ChannelHandlerContext fireChannelInactive();
     ChannelHandlerContext fireChannelRead(Object msg);
     ChannelHandlerContext fireChannelReadComplete();
 

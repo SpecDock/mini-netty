@@ -65,6 +65,12 @@ public class NioServerSocketChannel implements ServerSocketChannel {
             return null;
     }
 
+
+    @Override
+    public boolean isOpen(){
+        return ssc.isOpen();
+    }
+
     @Override
     public Future close() {
         Promise promise = new DefaultChannelPromise();

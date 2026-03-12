@@ -20,6 +20,16 @@ public class StringEncoder implements ChannelOutboundHandler {
     }
 
     @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        ctx.fireChannelActive();
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        ctx.fireChannelInactive();
+    }
+
+    @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         ctx.fireChannelRead(msg);
     }

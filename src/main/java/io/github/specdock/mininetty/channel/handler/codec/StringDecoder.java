@@ -23,6 +23,16 @@ public class StringDecoder implements ChannelInboundHandler {
     }
 
     @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        ctx.fireChannelActive();
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        ctx.fireChannelInactive();
+    }
+
+    @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         System.out.println("StringDecoder");
         byte[] buffer = (byte[]) msg;
