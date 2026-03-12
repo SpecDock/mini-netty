@@ -55,6 +55,17 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
         return this;
     }
 
+    @Override
+    public ChannelHandlerContext fireChannelActive() {
+        next.handler().channelActive(next);
+        return this;
+    }
+
+    @Override
+    public ChannelHandlerContext fireChannelInactive() {
+        next.handler().channelInactive(next);
+        return this;
+    }
 
     @Override
     public ChannelHandlerContext fireChannelRead(Object msg) {

@@ -4,6 +4,7 @@ import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.net.SocketAddress;
+import java.util.function.Function;
 
 /**
  * @author specdock
@@ -77,9 +78,15 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
     @Override
     public ChannelPipeline fireChannelActive() {
-        return null;
+        head.fireChannelActive();
+        return this;
     }
 
+    @Override
+    public ChannelPipeline fireChannelInactive() {
+        head.fireChannelInactive();
+        return this;
+    }
 
     /// TODO
     @Override
@@ -154,6 +161,19 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
     @Override
+    public ChannelHandlerContext filterContext(Function<ChannelHandler, Boolean> function){
+        AbstractChannelHandlerContext index = head.next;
+        while(index != tail){
+            ChannelHandler channelHandler = index.handler();
+            if(function.apply(channelHandler)){
+                return index;
+            }
+            index = index.next;
+        }
+        return null;
+    }
+
+    @Override
     public ChannelHandlerContext context(ChannelHandler handler) {
         AbstractChannelHandlerContext index = head.next;
         while(index != tail){
@@ -195,6 +215,16 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         public void channelRegistered(ChannelHandlerContext ctx) {
 
             ctx.fireChannelRegistered();
+        }
+
+        @Override
+        public void channelActive(ChannelHandlerContext ctx) {
+            ctx.fireChannelActive();
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            ctx.fireChannelInactive();
         }
 
         @Override
@@ -250,6 +280,16 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) {
+            // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
+        }
+
+        @Override
+        public void channelActive(ChannelHandlerContext ctx) {
+            // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
             // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
         }
 

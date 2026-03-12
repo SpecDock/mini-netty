@@ -3,6 +3,7 @@ package io.github.specdock.mininetty.channel;
 import io.github.specdock.mininetty.util.concurrent.Future;
 
 import java.net.SocketAddress;
+import java.util.function.Function;
 
 /**
  * @author specdock
@@ -33,7 +34,15 @@ public interface ChannelPipeline {
 
     ChannelPipeline fireChannelRegistered();
 
+    /**
+     * 触发通道激活事件
+     */
     ChannelPipeline fireChannelActive();
+
+    /**
+     * 触发通道失活事件
+     */
+    ChannelPipeline fireChannelInactive();
 
     /**
      * 触发数据读取事件，将消息 msg 传入管道
@@ -82,6 +91,8 @@ public interface ChannelPipeline {
      */
     ChannelHandlerContext context(String name);
 
+    ChannelHandlerContext filterContext(Function<ChannelHandler, Boolean> function);
+
     /**
      * 根据处理器实例查找对应的 ChannelHandlerContext
      */
@@ -97,4 +108,3 @@ public interface ChannelPipeline {
      */
     ChannelHandler last();
 }
-

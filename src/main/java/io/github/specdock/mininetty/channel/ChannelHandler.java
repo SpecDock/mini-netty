@@ -11,6 +11,10 @@ import io.github.specdock.mininetty.util.concurrent.Promise;
 public interface ChannelHandler {
      void channelRegistered(ChannelHandlerContext ctx);
 
+    void channelActive(ChannelHandlerContext ctx);
+
+    void channelInactive(ChannelHandlerContext ctx);
+
     public void channelRead(ChannelHandlerContext ctx, Object msg);
 
 

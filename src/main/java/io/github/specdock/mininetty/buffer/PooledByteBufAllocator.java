@@ -64,7 +64,7 @@ public class PooledByteBufAllocator {
         // 检查缓冲区是否已经被释放
         try {
             // 尝试访问缓冲区，如果已经被释放会抛出异常
-            buf.readableBytes();
+            buf.ensureAccessible();
         } catch (IllegalStateException e) {
             // 缓冲区已经被释放，直接返回
             return;

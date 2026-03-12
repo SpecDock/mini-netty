@@ -1,10 +1,7 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBuf;
-import io.github.specdock.mininetty.channel.ChannelHandler;
-import io.github.specdock.mininetty.channel.ChannelHandlerContext;
-import io.github.specdock.mininetty.channel.ChannelOutboundHandler;
-import io.github.specdock.mininetty.channel.DefaultChannelPromise;
+import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
@@ -16,7 +13,11 @@ import java.util.LinkedList;
  * @Date 2026/2/26
  * @Time  14:42
  */
+
+@FrameEncoder
 public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
+
+
     private final int lengthFieldLength;
 
     public LengthFieldBasedFrameEncoder(int lengthFieldLength){
@@ -31,6 +32,16 @@ public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
         ctx.fireChannelRegistered();
+    }
+
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        ctx.fireChannelActive();
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        ctx.fireChannelInactive();
     }
 
     @Override

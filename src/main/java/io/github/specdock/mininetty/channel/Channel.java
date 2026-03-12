@@ -40,4 +40,6 @@ public interface Channel {
 
     ChannelOutboundBuffer channelOutboundBuffer();
 
+    boolean isOpen();
+
 }

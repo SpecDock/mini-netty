@@ -77,7 +77,7 @@ public class ByteBuf {
         readIndex = 0;
     }
 
-    private void ensureAccessible() {
+    public void ensureAccessible() {
         if (isReleased.get()) {
             throw new IllegalStateException("Illegal access: ByteBuf has already been released.");
             // 在 Netty 中通常会抛出专用的 IllegalReferenceCountException
@@ -129,9 +129,13 @@ public class ByteBuf {
     }
 
     public void reset(){
+        ensureAccessible();
         readIndex = 0;
         writeIndex = 0;
+        // 重置底层ByteBuffer
+        byteBuffer.clear();
     }
+
 
     public void release() {
         // 利用 CAS 操作，确保底层物理清理只执行一次
@@ -141,6 +145,7 @@ public class ByteBuf {
     }
 
     public boolean isDirect(){
+        ensureAccessible();
         return byteBuffer.isDirect();
     }
 

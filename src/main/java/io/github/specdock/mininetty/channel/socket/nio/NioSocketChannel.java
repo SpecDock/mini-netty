@@ -127,6 +127,11 @@ public class NioSocketChannel implements SocketChannel {
         return promise;
     }
 
+    @Override
+    public boolean isOpen(){
+        return socketChannel.isOpen();
+    }
+
     private void doClose(Promise promise) {
         try {
             // 1. 幂等性校验：若已关闭则直接返回成功
