@@ -2,6 +2,7 @@ package io.github.specdock.mininetty.channel;
 
 import io.github.specdock.mininetty.util.concurrent.Future;
 
+import java.lang.annotation.Annotation;
 import java.net.SocketAddress;
 import java.util.function.Function;
 
@@ -18,10 +19,16 @@ public interface ChannelPipeline {
      */
     ChannelPipeline addFirst(ChannelHandler handler);
 
+    ChannelPipeline printHandlerAll();
+
     /**
      * 在管道最后面（tail 之前）添加处理器
      */
     ChannelPipeline addLast(ChannelHandler handler);
+
+    ChannelPipeline addAfter(Class<? extends Annotation> annotation, ChannelHandler channelHandler);
+
+    ChannelPipeline addBefore(Class<? extends Annotation> annotation, ChannelHandler channelHandler);
 
     /**
      * 从链表中移除指定的处理器实例
@@ -50,6 +57,11 @@ public interface ChannelPipeline {
     ChannelPipeline fireChannelRead(Object msg);
 
     ChannelPipeline fireChannelReadComplete();
+
+    /**
+     * 触发用户自定义事件
+     */
+    ChannelPipeline fireUserEventTriggered(Object event);
 
 
     // --- 出站事件请求 API (Outbound Events: 从 Tail 向 Head 传播) ---

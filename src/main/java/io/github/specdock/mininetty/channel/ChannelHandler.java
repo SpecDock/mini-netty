@@ -17,6 +17,7 @@ public interface ChannelHandler {
 
     public void channelRead(ChannelHandlerContext ctx, Object msg);
 
+    void userEventTriggered(ChannelHandlerContext ctx, Object event);
 
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise);
 

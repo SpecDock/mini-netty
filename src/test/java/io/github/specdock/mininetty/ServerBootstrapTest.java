@@ -1,10 +1,7 @@
 package io.github.specdock.mininetty;
 
 import io.github.specdock.mininetty.bootstrap.ServerBootstrap;
-import io.github.specdock.mininetty.channel.ChannelHandler;
-import io.github.specdock.mininetty.channel.ChannelHandlerContext;
-import io.github.specdock.mininetty.channel.ChannelInitializer;
-import io.github.specdock.mininetty.channel.SimpleChannelInboundHandler;
+import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameDecoder;
 import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameEncoder;
 import io.github.specdock.mininetty.channel.handler.codec.StringDecoder;
@@ -23,7 +20,7 @@ public class ServerBootstrapTest {
         ServerBootstrap serverBootstrap = new ServerBootstrap();
         serverBootstrap.group(new NioEventLoopGroup(), new NioEventLoopGroup(3))
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new ChannelInitializer<SocketChannel>(){
+                .childHandler(new ServerChannelInitializer<SocketChannel>(){
 
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {

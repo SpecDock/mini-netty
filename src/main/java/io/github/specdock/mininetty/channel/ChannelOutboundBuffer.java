@@ -32,17 +32,21 @@ public class ChannelOutboundBuffer {
     }
 
     public void flush(){
-        doWriteToChannel();
-        if((socketChannel.getSelectionKey().interestOps() & SelectionKey.OP_WRITE) != 0){
-            return ;
-        }
-        // 2. 状态机安全断言：只有在队列没清空（即触发了 TCP 发送窗口满的背压机制）时，才需要注册 OP_WRITE
-        if (!byteBufSenders.isEmpty()) {
-            SelectionKey key = socketChannel.getSelectionKey();
-            if (key != null && (key.interestOps() & SelectionKey.OP_WRITE) == 0) {
-                Selector selector = socketChannel.getSelectionKey().selector();
-                socketChannel.register(selector, SelectionKey.OP_WRITE);
+        try{
+            doWriteToChannel();
+            if((socketChannel.getSelectionKey().interestOps() & SelectionKey.OP_WRITE) != 0){
+                return ;
             }
+            // 2. 状态机安全断言：只有在队列没清空（即触发了 TCP 发送窗口满的背压机制）时，才需要注册 OP_WRITE
+            if (!byteBufSenders.isEmpty()) {
+                SelectionKey key = socketChannel.getSelectionKey();
+                if (key != null && (key.interestOps() & SelectionKey.OP_WRITE) == 0) {
+                    Selector selector = socketChannel.getSelectionKey().selector();
+                    socketChannel.register(selector, SelectionKey.OP_WRITE);
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("缓冲区写入内核出现异常", e);
         }
     }
 

@@ -52,4 +52,9 @@ public class StringEncoder implements ChannelOutboundHandler {
     public void flush(ChannelHandlerContext ctx) {
         ctx.flush();
     }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+        ctx.fireUserEventTriggered(event);
+    }
 }

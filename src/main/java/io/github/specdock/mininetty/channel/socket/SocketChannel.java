@@ -18,5 +18,6 @@ public interface SocketChannel extends Channel {
 
     int write(java.nio.ByteBuffer src);
 
+
     void finishConnect();
 }

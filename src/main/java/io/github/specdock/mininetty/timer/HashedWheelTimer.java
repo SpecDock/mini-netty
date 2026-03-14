@@ -22,10 +22,9 @@ public class HashedWheelTimer {
 
     private final Queue<TimeoutTask> queue = new ConcurrentLinkedQueue<>();
     private final Thread worker;
-    private final AtomicBoolean started = new AtomicBoolean(false);
 
-    // 重构点 2：时间基准点采用毫秒级时间戳
-    private final long startTime = System.currentTimeMillis();
+    // 将 startTime 声明，但不立即赋值
+    private final long startTime;
 
     private HashedWheelTimer(int ticksPerWheel, long tickDurationMs) {
         int size = 1;
@@ -39,22 +38,26 @@ public class HashedWheelTimer {
             wheel[i] = new Bucket();
         }
 
-        // 重构点 3：直接赋值毫秒，移除 TimeUnit 转换
         this.tickMs = tickDurationMs;
+
+        // ★ 核心修复：构造器内立刻对齐时钟并启动后台线程！
+        // 确保 tick = 0 的瞬间，就是真实世界的 startTime。彻底消灭时间空洞！
+        this.startTime = System.currentTimeMillis();
         this.worker = new Thread(this::runWorker, "MiniNetty-Timer-Worker");
+        // 守护线程，不影响 JVM 退出
         this.worker.setDaemon(true);
+        this.worker.start();
     }
 
     public static TimeoutTask newTimeout(Runnable task, long lastTimeMs, long delayMs) {
         return INSTANCE.scheduleTask(task, lastTimeMs, delayMs);
     }
 
+    // 调度方法现在变得极其干净
     private TimeoutTask scheduleTask(Runnable task, long lastTimeMs, long delayMs) {
-        if (started.compareAndSet(false, true)) {
-            worker.start();
-        }
+        // 移除懒加载逻辑
+        // if (started.compareAndSet(false, true)) { worker.start(); }
 
-        // 重构点 4：截止时间计算统一采用毫秒
         long deadlineMs = lastTimeMs + delayMs - startTime;
         TimeoutTask timeoutTask = new TimeoutTask(task, deadlineMs, lastTimeMs);
         queue.offer(timeoutTask);
@@ -66,6 +69,11 @@ public class HashedWheelTimer {
     private void runWorker() {
         long tick = 0;
         while (!Thread.currentThread().isInterrupted()) {
+            // 加在这里：每转 5 圈（5 秒），打印一次心跳
+            if (tick % 5 == 0) {
+                System.out.println("⏱️ 时间轮正在滴答作响，当前 Tick: " + tick);
+            }
+
             // 重构点 5：时间轮指针推进计算采用毫秒
             long deadline = tickMs * (tick + 1);
             long sleepMs = deadline - (System.currentTimeMillis() - startTime);

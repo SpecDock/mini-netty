@@ -31,6 +31,7 @@ public class NioSocketChannel implements SocketChannel {
 
 
 
+
     public NioSocketChannel(java.nio.channels.SocketChannel socketChannel){
         try {
             socketChannel.configureBlocking(false);
@@ -52,6 +53,18 @@ public class NioSocketChannel implements SocketChannel {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Override
+    public boolean isActive() {
+        return socketChannel != null
+                && socketChannel.isOpen()
+                && socketChannel.socket().isBound();
+    }
+
+    @Override
+    public boolean isRegistered() {
+        return selectionKey != null;
     }
 
     @Override
@@ -94,24 +107,20 @@ public class NioSocketChannel implements SocketChannel {
             // 1. 物理状态确认 (必须执行，否则 Channel 处于中间态，无法进行读写)
             if (socketChannel.finishConnect()) {
 
-                // 2. 清除 OP_CONNECT 兴趣位 (防止 Selector 持续触发)
-                selectionKey.interestOps(selectionKey.interestOps() & ~SelectionKey.OP_CONNECT);
+                // 2. 清除 OP_CONNECT 兴趣位 (防止 Selector 持续触发),切换至读就绪意向 (通常连接成功后立即准备接收数据)
+                int ops = selectionKey.interestOps();
+                selectionKey.interestOps((ops & ~SelectionKey.OP_CONNECT) | SelectionKey.OP_READ);
 
-                // 3. 切换至读就绪意向 (通常连接成功后立即准备接收数据)
-                selectionKey.interestOps(selectionKey.interestOps() | SelectionKey.OP_READ);
-
-                // 4. 核销异步凭证
+                // 3. 核销异步凭证
                 connectPromise.setSuccess();
+
+                pipeline().fireChannelActive();
             }
         } catch (IOException e) {
             // 6. 捕获握手阶段的物理失败 (如 Connection Refused)
             connectPromise.setFailure(e);
             // 关闭损坏的通道
-            try {
-                socketChannel.close();
-            } catch (IOException ex) {
-                throw new RuntimeException(ex);
-            }
+            this.close();
         }
     }
 
@@ -134,6 +143,7 @@ public class NioSocketChannel implements SocketChannel {
 
     private void doClose(Promise promise) {
         try {
+            pipeline().fireChannelInactive();
             // 1. 幂等性校验：若已关闭则直接返回成功
             if (!socketChannel.isOpen()) {
                 promise.setSuccess();
@@ -150,6 +160,8 @@ public class NioSocketChannel implements SocketChannel {
 
             // 4. 核销 Promise 凭证
             promise.setSuccess();
+
+            System.out.println("NioSocketChannel:doClose," + "已经执行fireChannelInactive并关闭Channel");
 
         } catch (IOException e) {
             // 物理关闭异常反馈
@@ -226,7 +238,7 @@ public class NioSocketChannel implements SocketChannel {
         try {
             return socketChannel.read(msg);
         } catch (IOException e) {
-            throw new RuntimeException("java.nio.channels.SocketChannel的read方法出现异常", e);
+            throw new RuntimeException("java.nio.channels.SocketChannel的read方法出现异常:" + e.getMessage());
         }
     }
 

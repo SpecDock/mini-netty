@@ -27,6 +27,7 @@ public interface ChannelHandlerContext {
     ChannelHandlerContext fireChannelInactive();
     ChannelHandlerContext fireChannelRead(Object msg);
     ChannelHandlerContext fireChannelReadComplete();
+    ChannelHandlerContext fireUserEventTriggered(Object event);
 
 
 

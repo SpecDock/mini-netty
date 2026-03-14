@@ -14,9 +14,8 @@ import java.util.LinkedList;
  * @Time  14:42
  */
 
-@FrameEncoder
+@FrameCodec
 public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
-
 
     private final int lengthFieldLength;
 
@@ -74,12 +73,16 @@ public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg) {
         Promise promise = new DefaultChannelPromise();
-        ctx.write(msg, promise);
-        return promise;
+        return write(ctx, msg, promise);
     }
 
     @Override
     public void flush(ChannelHandlerContext ctx) {
         ctx.flush();
+    }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+        ctx.fireUserEventTriggered(event);
     }
 }

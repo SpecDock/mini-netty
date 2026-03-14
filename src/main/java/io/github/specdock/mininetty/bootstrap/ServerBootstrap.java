@@ -2,8 +2,11 @@ package io.github.specdock.mininetty.bootstrap;
 
 
 import io.github.specdock.mininetty.channel.*;
+import io.github.specdock.mininetty.channel.handler.timeout.IdleStateHandler;
+import io.github.specdock.mininetty.channel.handler.timeout.ServerHeartbeatHandler;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
+import io.github.specdock.mininetty.util.HeartbeatConstant;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
@@ -114,21 +117,19 @@ public class ServerBootstrap {
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             System.out.println("ServerBootstrapAcceptor");
 
-            // 1. 类型转换：对于 ServerChannel 来说，读取到的 msg 就是新连接
-            ServerSocketChannel serverSocketChannel = (ServerSocketChannel) msg;
-            SocketChannel socketChannel = serverSocketChannel.accept();
+            // 1. 类型转换：读取到的 msg 就是新连接
+            SocketChannel socketChannel = (SocketChannel) msg;
 
             // 2. ★ 核心动作：将用户配置的 childHandler 加入新连接的 Pipeline
             // 注意：这里不需要管它是 Initializer 还是普通 Handler，直接 addLast 即可
-            socketChannel.pipeline()
-                    .addLast(new HeartbeatHandler())
-                    .addLast(childHandler);
+            socketChannel.pipeline().addLast(childHandler);
 
 
 
             // 4. 注册：将新连接移交给 Worker 线程组
             // 这一步会触发 worker 的 channelRegistered 事件
             workers.register(socketChannel, SelectionKey.OP_READ);
+
         }
 
         @Override
@@ -163,6 +164,13 @@ public class ServerBootstrap {
         public void flush(ChannelHandlerContext ctx) {
             ctx.flush();
         }
+
+        @Override
+        public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+            ctx.fireUserEventTriggered(event);
+        }
+
+
     }
 
 }

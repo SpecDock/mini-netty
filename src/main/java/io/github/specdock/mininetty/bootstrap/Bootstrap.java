@@ -2,6 +2,7 @@ package io.github.specdock.mininetty.bootstrap;
 
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameEncoder;
+import io.github.specdock.mininetty.channel.handler.timeout.IdleStateHandler;
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
 import io.github.specdock.mininetty.util.HeartbeatConstant;
@@ -61,10 +62,8 @@ public class Bootstrap {
             promise.setChannel(channel);
 
             // 4. 线程模型注册 (EventLoop Registration)
-            // 将该 Channel 绑定到 Worker 线程组中的某一个 EventLoop 上
-            // 注意：此时可能仅注册 0（无事件），等待 connect 触发 OP_CONNECT
-            Future future = workers.register(channel, 0);
-            future.sync();
+            channel.setEventLoop(workers.next());
+            channel.getEventLoop().register(channel, 0);
 
             // 5. 触发物理连接动作 (Physical Connection Trigger)
             // 由于是非阻塞 I/O，必须将 promise 传递到最底层，
@@ -78,26 +77,6 @@ public class Bootstrap {
                     "| |  | | | | | | | |____| | |\\  |  __/ |_| |_| |_| |\n" +
                     "|_|  |_|_|_| |_|_|        |_| \\_|\\___|\\__|\\__|\\__, |\n" +
                     "                                              |___/");
-
-            promise.addListener(future1 -> {
-                if(future1.isSuccess()){
-                    System.out.println("成功连接");
-                    EventLoop eventExecutors = future1.channel().getEventLoop();
-
-                    ChannelHandlerContext context = future1.channel().pipeline().filterContext(channelHandler -> {
-                        Class<?> handlerClass = channelHandler.getClass();
-                        return handlerClass.isAnnotationPresent(FrameEncoder.class);
-                    });
-
-                    eventExecutors.scheduleAtFixedRate(() -> {
-                        context.handler().write(context, new byte[0]);
-                        context.handler().flush(context);
-                    }, 0, HeartbeatConstant.HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
-                }
-                else {
-                    System.out.println("连接失败");
-                }
-            });
 
             return promise;
 
