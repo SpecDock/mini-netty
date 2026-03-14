@@ -35,13 +35,9 @@ public class BootstrapTest {
                                 .addLast(new SimpleChannelInboundHandler() {
                                     @Override
                                     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-                                        System.out.println(msg);
-                                        Future close = ctx.channel().close();
-                                        close.addListener(f -> {
-                                            if(f.isSuccess()){
-                                                System.out.println("客户端TCP连接已经关闭");
-                                            }
-                                        });
+                                        String s = (String) msg;
+                                        System.out.println("这里是Client端收到的消息：" + msg);
+                                        ctx.fireChannelRead(msg);
                                     }
 
                                     @Override
