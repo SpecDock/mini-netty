@@ -1,10 +1,7 @@
 package io.github.specdock.mininetty;
 
 import io.github.specdock.mininetty.bootstrap.Bootstrap;
-import io.github.specdock.mininetty.channel.ChannelHandlerContext;
-import io.github.specdock.mininetty.channel.ChannelInitializer;
-import io.github.specdock.mininetty.channel.EventLoop;
-import io.github.specdock.mininetty.channel.SimpleChannelInboundHandler;
+import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameDecoder;
 import io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameEncoder;
 import io.github.specdock.mininetty.channel.handler.codec.StringDecoder;
@@ -27,7 +24,7 @@ public class BootstrapTest {
         Bootstrap bootstrap = new Bootstrap();
         bootstrap.group(new NioEventLoopGroup())
                 .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>() {
+                .handler(new ClientChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ch.pipeline()
@@ -46,6 +43,15 @@ public class BootstrapTest {
                                             }
                                         });
                                     }
+
+                                    @Override
+                                    public void channelActive(ChannelHandlerContext ctx){
+                                        EventLoop eventExecutors = ctx.channel().getEventLoop();
+                                        eventExecutors.scheduleAtFixedRate(() -> {
+                                            System.out.println(">> 定时任务已触发，准备将数据压入 Pipeline");
+                                            ctx.pipeline().writeAndFlush("你好，我是客户端，我是业务数据");
+                                        }, 0, 50 * 1000, TimeUnit.MILLISECONDS);
+                                    }
                                 });
                     }
                 });
@@ -54,11 +60,6 @@ public class BootstrapTest {
         connect.addListener(future -> {
             if(future.isSuccess()){
                 System.out.println("成功连接");
-                EventLoop eventExecutors = connect.channel().getEventLoop();
-                eventExecutors.scheduleAtFixedRate(() -> {
-                    System.out.println(">> 定时任务已触发，准备将数据压入 Pipeline");
-                    connect.channel().pipeline().writeAndFlush("你好，我是客户端");
-                }, 0, 10, TimeUnit.MILLISECONDS);
             }
             else {
                 System.out.println("连接失败");

@@ -1,6 +1,7 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
+import io.github.specdock.mininetty.buffer.SimpleByteArray;
 import io.github.specdock.mininetty.channel.ChannelHandlerContext;
 import io.github.specdock.mininetty.channel.ChannelInboundHandler;
 import io.github.specdock.mininetty.channel.DefaultChannelPromise;
@@ -35,8 +36,8 @@ public class StringDecoder implements ChannelInboundHandler {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         System.out.println("StringDecoder");
-        byte[] buffer = (byte[]) msg;
-        String target = new String(buffer, StandardCharsets.UTF_8);
+        SimpleByteArray buffer = (SimpleByteArray) msg;
+        String target = new String(buffer.bytes, buffer.begin, buffer.end - buffer.begin, StandardCharsets.UTF_8);
         ctx.fireChannelRead(target);
     }
 
@@ -58,5 +59,10 @@ public class StringDecoder implements ChannelInboundHandler {
     @Override
     public void flush(ChannelHandlerContext ctx) {
         ctx.flush();
+    }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+        ctx.fireUserEventTriggered(event);
     }
 }

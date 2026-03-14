@@ -42,4 +42,8 @@ public interface Channel {
 
     boolean isOpen();
 
+    boolean isActive();
+
+    boolean isRegistered();
+
 }

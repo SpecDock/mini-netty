@@ -3,6 +3,7 @@ package io.github.specdock.mininetty.channel;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
+import java.lang.annotation.Annotation;
 import java.net.SocketAddress;
 import java.util.function.Function;
 
@@ -28,8 +29,18 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     }
 
     @Override
+    public ChannelPipeline printHandlerAll(){
+        AbstractChannelHandlerContext index = head;
+        while(index != null){
+            System.out.println(index.handler().getClass().getName());
+            index = index.next;
+        }
+        return this;
+    }
+
+    @Override
     public ChannelPipeline addLast(ChannelHandler handler) {
-        DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
+        AbstractChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
         // 插入到tail节点前面
         context.next = tail;
         context.prev = tail.prev;
@@ -38,14 +49,54 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         return this;
     }
 
+
+
     @Override
     public ChannelPipeline addFirst(ChannelHandler handler) {
-        DefaultChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
+        AbstractChannelHandlerContext context = new DefaultChannelHandlerContext(handler, this);
         // 插入到head节点后面
         context.prev = head;
         context.next = head.next;
         head.next.prev = context;
         head.next = context;
+        return this;
+    }
+
+    @Override
+    public ChannelPipeline addAfter(Class<? extends Annotation> annotation, ChannelHandler channelHandler){
+        AbstractChannelHandlerContext index = tail.prev;
+        while(index != head){
+            if (index.handler().getClass().isAnnotationPresent(annotation)) {
+                AbstractChannelHandlerContext context = new DefaultChannelHandlerContext(channelHandler, this);
+                context.prev = index;
+                context.next = index.next;
+                index.next.prev = context;
+                index.next = context;
+                return this;
+
+            }
+            index = index.prev;
+        }
+        System.err.println(this.getClass().getName() + ":addAfter，未找到有" + annotation.getName() + "注解的ChannelHandler");
+        return this;
+    }
+
+    @Override
+    public ChannelPipeline addBefore(Class<? extends Annotation> annotation, ChannelHandler channelHandler){
+        AbstractChannelHandlerContext index = head.next;
+        while(index != tail){
+            if (index.handler().getClass().isAnnotationPresent(annotation)) {
+                AbstractChannelHandlerContext context = new DefaultChannelHandlerContext(channelHandler, this);
+                context.next = index;
+                context.prev = index.prev;
+                index.prev.next = context;
+                index.prev = context;
+                return this;
+
+            }
+            index = index.next;
+        }
+        System.out.println(this.getClass().getName() + ":addAfter，未找到有" + annotation.getName() + "注解的ChannelHandler");
         return this;
     }
 
@@ -99,6 +150,12 @@ public class DefaultChannelPipeline implements ChannelPipeline{
     @Override
     public ChannelPipeline fireChannelReadComplete() {
         return null;
+    }
+
+    @Override
+    public ChannelPipeline fireUserEventTriggered(Object event) {
+        head.fireUserEventTriggered(event);
+        return this;
     }
 
 
@@ -234,6 +291,11 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         }
 
         @Override
+        public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+            ctx.fireUserEventTriggered(event);
+        }
+
+        @Override
         public ChannelHandler handler() {
             return this;
         }
@@ -296,6 +358,11 @@ public class DefaultChannelPipeline implements ChannelPipeline{
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
 
+            // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
+        }
+
+        @Override
+        public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
             // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
         }
 

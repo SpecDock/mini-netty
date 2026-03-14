@@ -1,6 +1,7 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
+import io.github.specdock.mininetty.buffer.SimpleByteArray;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
@@ -13,15 +14,17 @@ import java.util.LinkedList;
  * @Time 14:41
  */
 
-@FrameDecoder
+@FrameCodec
 public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     private final int lengthFieldLength;
-    private final LinkedList<ByteBufChain> byteBufChainList;
     private int lengthField;
-    private byte[] target;
-    private int lengthFieldOffset;
-    private int targetOffset;
     private byte[] lengthFieldBytes;
+    private int lengthFieldOffset;
+
+    private byte[] target;
+    private int targetOffset;
+
+    private final LinkedList<ByteBufChain> byteBufChainList;
 
     public LengthFieldBasedFrameDecoder(int lengthFieldLength){
         this.lengthFieldLength = lengthFieldLength;
@@ -85,7 +88,7 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
                 lengthField = bytesToInt(lengthFieldBytes);
                 target = new byte[lengthField];
                 if(lengthField == 0){
-                    ctx.fireChannelRead(target);
+                    ctx.fireChannelRead(new SimpleByteArray(target, 0, target.length));
                     target = null;
                     continue;
                 }
@@ -100,7 +103,7 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
             if(lengthField > 0){
                 continue;
             }
-            ctx.fireChannelRead(target);
+            ctx.fireChannelRead(new SimpleByteArray(target, 0, target.length));
             lengthField = 0;
             target = null;
             targetOffset = 0;
@@ -142,5 +145,10 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     @Override
     public void flush(ChannelHandlerContext ctx) {
         ctx.flush();
+    }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
+        ctx.fireUserEventTriggered(event);
     }
 }

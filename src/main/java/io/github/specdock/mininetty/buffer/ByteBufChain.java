@@ -72,7 +72,7 @@ public class ByteBufChain {
         return bufferChain.getLast();
     }
 
-    public int write(SocketChannel socketChannel) throws Exception{
+    public int write(SocketChannel socketChannel){
         int sum = 0;
         for(int i = 0; i < 16; i++){
             ByteBuf buf = getLastWritableBuf();

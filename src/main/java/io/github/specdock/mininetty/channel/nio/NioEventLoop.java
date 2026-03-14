@@ -6,6 +6,7 @@ import io.github.specdock.mininetty.channel.Channel;
 import io.github.specdock.mininetty.channel.DefaultChannelPromise;
 import io.github.specdock.mininetty.channel.EventLoop;
 import io.github.specdock.mininetty.channel.ServerChannel;
+import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
@@ -98,7 +99,7 @@ public class NioEventLoop implements EventLoop {
     public void scheduleAtFixedRate(Runnable task, long initialDelay, long period, TimeUnit unit) {
         ScheduleTask scheduleTask = new ScheduleTask(task, this, deadLineMs(initialDelay, unit), unit.toMillis(period));
         if (!scheduleTaskQueue.offer(scheduleTask)) {
-            throw new RuntimeException("阻塞队列已经满了");
+            throw new RuntimeException("定时任务队列已经满了");
         }
         selector.wakeup();
     }
@@ -154,12 +155,19 @@ public class NioEventLoop implements EventLoop {
             // 1. 绑定 EventLoop 上下文
             channel.setEventLoop(this);
 
+            boolean wasRegister = channel.isRegistered();
+
             // 2. 核心 JNI 调用：向底层 Selector 注册感兴趣的事件
             // 注意：底层 NIO 的 register 方法会抛出 ClosedChannelException
             channel.register(selector, interestOps, promise);
 
             // 3. 触发责任链的 Registered 生命周期
             channel.pipeline().fireChannelRegistered();
+
+            // 4. 注册完后应该active
+            if(channel.isActive() && wasRegister != channel.isRegistered()){
+                channel.pipeline().fireChannelActive();
+            }
         }catch (Exception e){
             throw new RuntimeException("NioEventLoop中的register0方法出现异常", e);
         }
@@ -255,8 +263,11 @@ public class NioEventLoop implements EventLoop {
                         if ((selectionKey.readyOps() & SelectionKey.OP_ACCEPT) != 0) {
                             // 监听到OP_ACCEPT事件
                             System.out.println("监听到OP_ACCEPT事件");
-                            ServerChannel serverChannel = (ServerChannel) selectionKey.attachment();
-                            serverChannel.pipeline().fireChannelRead(serverChannel);
+                            ServerSocketChannel serverChannel = (ServerSocketChannel) selectionKey.attachment();
+                            SocketChannel socketChannel = serverChannel.accept();
+                            if(socketChannel != null){
+                                serverChannel.pipeline().fireChannelRead(socketChannel);
+                            }
                         }
                         if((selectionKey.readyOps() & SelectionKey.OP_READ) != 0){
 
@@ -264,10 +275,10 @@ public class NioEventLoop implements EventLoop {
                             ByteBufChain msg = new ByteBufChain(true, allocator);
                             SocketChannel socketChannel = (SocketChannel) selectionKey.attachment();
                             int write = msg.write(socketChannel);
-                            socketChannel.pipeline().fireChannelRead(msg);
-                            if(write == -1){
-                                throw new RuntimeException(socketChannel.getRemoveAddress().toString() + "：断开连接");
+                            if (write == -1){
+                                throw new RuntimeException("对方channel已关闭");
                             }
+                            socketChannel.pipeline().fireChannelRead(msg);
                         }
                         if((selectionKey.readyOps() & SelectionKey.OP_WRITE) != 0){
 
@@ -286,7 +297,8 @@ public class NioEventLoop implements EventLoop {
                         selectionKey.cancel();
                         try{
                             if(selectionKey.channel() != null){
-                                selectionKey.channel().close();
+                                Channel ch = (Channel) selectionKey.attachment();
+                                ch.close();
                             }
                         }catch (Exception ex){
 

@@ -78,6 +78,12 @@ public abstract class AbstractChannelHandlerContext implements ChannelHandlerCon
         return null;
     }
 
+    @Override
+    public ChannelHandlerContext fireUserEventTriggered(Object event) {
+        next.handler().userEventTriggered(next, event);
+        return this;
+    }
+
 
 
 

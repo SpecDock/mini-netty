@@ -26,7 +26,7 @@ public class NioServerSocketChannel implements ServerSocketChannel {
 
     private SelectionKey selectionKey;
 
-    private ChannelPipeline pipeline;
+    private final ChannelPipeline pipeline;
 
     /// 已弃用
     /// 现在使用构造器方法，每一个ServerChannel都维护一个EventLoopGroup，方便在boss线程里accept到的channel注册到workers
@@ -43,6 +43,18 @@ public class NioServerSocketChannel implements ServerSocketChannel {
         } catch (IOException e) {
             throw new RuntimeException(this.getClass().getName() + "开启失败", e);
         }
+    }
+
+    @Override
+    public boolean isActive() {
+        return ssc != null
+                && ssc.isOpen()
+                && ssc.socket().isBound();
+    }
+
+    @Override
+    public boolean isRegistered() {
+        return selectionKey != null;
     }
 
     @Override
