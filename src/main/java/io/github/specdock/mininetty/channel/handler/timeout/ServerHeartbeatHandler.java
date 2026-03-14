@@ -17,6 +17,7 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
 
     // 预分配复用的 Pong 字节帧，避免高并发下频繁引发小对象分配
     private static final byte[] PONG_FRAME = new byte[]{2};
+    private static final byte[] PAYLOAD_HEADER = new byte[]{0};
 
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
@@ -79,7 +80,13 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
 
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
-        return ctx.write(msg, promise);
+        // 出站数据拦截拓展：
+        // 若业务层写入的是序列化好的纯业务负载，理论上应在此处（或专门的 Encoder 中）补齐前置的 0x00 协议头。
+        byte[] payload = (byte[]) msg;
+        byte[] target = new byte[payload.length + 1];
+        System.arraycopy(PAYLOAD_HEADER, 0, target, 0, PAYLOAD_HEADER.length);
+        System.arraycopy(payload, 0, target, 1, payload.length);
+        return ctx.write(target, promise);
     }
 
     @Override

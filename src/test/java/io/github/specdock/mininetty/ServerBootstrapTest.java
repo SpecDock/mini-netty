@@ -34,8 +34,9 @@ public class ServerBootstrapTest {
                                     public void channelRead(ChannelHandlerContext ctx, Object msg) {
                                         String s = (String) msg;
                                         if(s != null && !s.isEmpty()){
-                                            System.out.println("这里是服务端接受到的消息：" + s);
+                                            System.out.println("这里是Server端接受到的消息：" + s);
                                         }
+                                        ctx.pipeline().writeAndFlush("ACK");
                                         ctx.fireChannelRead(msg);
                                     }
                                 });
