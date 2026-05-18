@@ -66,17 +66,27 @@ public class ByteBuf implements ReferenceCounted {
     // retainedSlice 只创建视图，所有视图共享 root 的引用计数，避免 slice 单独清理导致 double free。
     private final ByteBuf root;
     private final AtomicInteger refCnt;
+    private final AtomicInteger generation;
+    private int generationSnapshot;
     // 只有根 ByteBuf 拥有真实内存；派生视图 release 时只递减 root.refCnt。
     private final boolean ownsMemory;
+    private final PooledByteBufAllocator allocator;
     private int writeIndex;
     private int readIndex;
 
 
     public ByteBuf(ByteBuffer byteBuffer){
+        this(byteBuffer, null);
+    }
+
+    ByteBuf(ByteBuffer byteBuffer, PooledByteBufAllocator allocator){
         this.byteBuffer = byteBuffer;
         this.root = this;
         this.refCnt = new AtomicInteger(1);
+        this.generation = new AtomicInteger(0);
+        this.generationSnapshot = 0;
         this.ownsMemory = true;
+        this.allocator = allocator;
         writeIndex = byteBuffer.position();
         readIndex = 0;
     }
@@ -85,13 +95,16 @@ public class ByteBuf implements ReferenceCounted {
         this.byteBuffer = byteBuffer;
         this.root = root.root;
         this.refCnt = this.root.refCnt;
+        this.generation = this.root.generation;
+        this.generationSnapshot = this.root.generation.get();
         this.ownsMemory = false;
+        this.allocator = this.root.allocator;
         this.readIndex = readIndex;
         this.writeIndex = writeIndex;
     }
 
     public void ensureAccessible() {
-        if (refCnt.get() <= 0) {
+        if (refCnt.get() <= 0 || generationSnapshot != root.generation.get()) {
             throw new IllegalStateException("Illegal access: ByteBuf has already been released.");
             // 在 Netty 中通常会抛出专用的 IllegalReferenceCountException
         }
@@ -229,6 +242,9 @@ public class ByteBuf implements ReferenceCounted {
 
     @Override
     public int refCnt() {
+        if (generationSnapshot != root.generation.get()) {
+            return 0;
+        }
         return refCnt.get();
     }
 
@@ -236,6 +252,9 @@ public class ByteBuf implements ReferenceCounted {
     public ByteBuf retain() {
         int count;
         do {
+            if (generationSnapshot != root.generation.get()) {
+                throw new IllegalStateException("Illegal retain: ByteBuf has already been released.");
+            }
             count = refCnt.get();
             if (count <= 0) {
                 throw new IllegalStateException("Illegal retain: ByteBuf has already been released.");
@@ -248,6 +267,9 @@ public class ByteBuf implements ReferenceCounted {
     public boolean release() {
         int count;
         do {
+            if (generationSnapshot != root.generation.get()) {
+                throw new IllegalStateException("Illegal release: ByteBuf has already been released.");
+            }
             count = refCnt.get();
             if (count <= 0) {
                 throw new IllegalStateException("Illegal release: ByteBuf has already been released.");
@@ -256,7 +278,11 @@ public class ByteBuf implements ReferenceCounted {
         if (count == 1) {
             // 最后一个引用释放时，只允许 root 清理真实 direct memory。
             if (root.ownsMemory) {
-                releaseNative(root.byteBuffer);
+                if (root.allocator != null) {
+                    root.allocator.recycle(root);
+                } else {
+                    releaseNative(root.byteBuffer);
+                }
             }
             return true;
         }
@@ -266,6 +292,45 @@ public class ByteBuf implements ReferenceCounted {
     public boolean isDirect(){
         ensureAccessible();
         return byteBuffer.isDirect();
+    }
+
+    void resetForReuse() {
+        root.generationSnapshot = root.generation.get();
+        root.refCnt.set(1);
+        root.readIndex = 0;
+        root.writeIndex = 0;
+        root.byteBuffer.clear();
+    }
+
+    void markRecycledForAllocator() {
+        root.generation.incrementAndGet();
+        root.refCnt.set(0);
+        root.readIndex = 0;
+        root.writeIndex = 0;
+        root.byteBuffer.clear();
+    }
+
+    void deallocateForAllocator() {
+        root.refCnt.set(0);
+        if (root.ownsMemory) {
+            releaseNative(root.byteBuffer);
+        }
+    }
+
+    int capacityForAllocator() {
+        return root.byteBuffer.capacity();
+    }
+
+    boolean isDirectForAllocator() {
+        return root.byteBuffer.isDirect();
+    }
+
+    boolean isCurrentForAllocator() {
+        return generationSnapshot == root.generation.get();
+    }
+
+    boolean isRootForAllocator() {
+        return this == root;
     }
 
     private static void releaseNative(ByteBuffer buffer) {

@@ -23,7 +23,9 @@ public class ClientHeartbeatHandler implements ChannelInboundHandler, ChannelOut
         System.out.println("ClientHeartbeatHandler");
         if (msg instanceof SimpleByteArray) {
             SimpleByteArray frameData = (SimpleByteArray) msg;
-            if (frameData == null || frameData.end - frameData.begin == 0) return;
+            if (frameData == null || frameData.end - frameData.begin == 0) {
+                return;
+            }
             byte frameType = frameData.bytes[frameData.begin];
             if (frameType == 2) { System.out.println("Pong"); return; }
             if (frameType == 0 && frameData.end - frameData.begin > 1) { frameData.begin++; ctx.fireChannelRead(frameData); }

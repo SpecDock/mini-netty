@@ -198,11 +198,15 @@ public class ByteBufChain implements ReferenceCounted {
             try {
                 buf.release();
             } catch (RuntimeException e) {
-                if(failure == null) failure = e;
+                if(failure == null) {
+                    failure = e;
+                }
             }
         }
         bufferChain.clear();
-        if(failure != null) throw failure;
+        if(failure != null) {
+            throw failure;
+        }
         return true;
     }
 

@@ -52,7 +52,7 @@
 - 支持 `retainedSlice(length)` 创建共享底层内存的切片视图，避免 payload 拷贝
 - 支持 `nioBuffer()` 暴露当前可读区间的 `ByteBuffer` 视图，用于 NIO 写出
 - 支持 `readByte()`、`skipBytes()`、`writeByte()`、`writeInt()`、`writeBytes()` 等基础读写操作
-- 提供 `release()` 方法释放直接内存（通过 sun.misc.Unsafe 或 sun.nio.ch.DirectBuffer.cleaner）
+- 提供 `release()` 方法管理生命周期：池化 root 在引用归零时回交 `PooledByteBufAllocator`，非池化 root 释放直接内存（通过 sun.misc.Unsafe 或 sun.nio.ch.DirectBuffer.cleaner）
 - 使用共享 `AtomicInteger refCnt` 防止 Double Free 和提前释放
 - 支持直接内存和堆内存缓冲区的判断
 
@@ -112,8 +112,8 @@
 - 默认缓冲区大小 1024 字节，最大池大小 1024
 - `allocate(isDirect)` 方法从池中获取缓冲区，池空时创建新的
 - `allocate(isDirect, capacity)` 支持创建非默认容量缓冲区，主要用于协议头和字符串转换边界
-- `recycle(ByteBuf)` 方法在 `refCnt == 1` 时将缓冲区重置后归还池中，避免仍有 slice 持有时回池
-- 池满时调用 `ByteBuf.release()` 释放直接内存
+- `recycle(ByteBuf)` 方法接收引用归零的池化 root buffer，并统一判断默认容量回池、非默认容量或池满时释放底层内存
+- 回池对象在再次 `allocate()` 返回前保持不可访问状态，避免旧生命周期句柄误访问；复用时再重置读写索引和引用计数
 - `close()` 方法关闭分配器并释放所有池中缓冲区
 
 ---
@@ -668,6 +668,7 @@ SelectionKey 操作位工具类。
 | `ServerBootstrapTest` | ServerBootstrap 服务端绑定测试 |
 | `DirectBufferTest` | 直接内存缓冲区测试 |
 | `PooledByteBufAllocatorTest` | 池化分配器测试 |
+| `PooledByteBufAllocatorRecycleTest` | 池化 ByteBuf release 归零回池、非默认容量释放决策和旧句柄不可访问测试 |
 | `TextTest` | 文本处理测试 |
 
 ---

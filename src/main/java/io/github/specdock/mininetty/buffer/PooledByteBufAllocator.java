@@ -1,7 +1,6 @@
 package io.github.specdock.mininetty.buffer;
 
 import java.nio.ByteBuffer;
-import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -37,8 +36,8 @@ public class PooledByteBufAllocator {
      */
     public PooledByteBufAllocator(int bufferSize) {
         this.bufferSize = bufferSize;
-        this.directBufferPool = new LinkedList<>();
-        this.heapBufferPool = new LinkedList<>();
+        this.directBufferPool = new ConcurrentLinkedQueue<>();
+        this.heapBufferPool = new ConcurrentLinkedQueue<>();
     }
 
     /**
@@ -52,7 +51,9 @@ public class PooledByteBufAllocator {
         if (buf == null) {
             // 池中没有可用的缓冲区，创建新的
             ByteBuffer byteBuffer = isDirect ? ByteBuffer.allocateDirect(bufferSize) : ByteBuffer.allocate(bufferSize);
-            buf = new ByteBuf(byteBuffer);
+            buf = new ByteBuf(byteBuffer, this);
+        } else {
+            buf.resetForReuse();
         }
         return buf;
     }
@@ -60,7 +61,7 @@ public class PooledByteBufAllocator {
     public ByteBuf allocate(boolean isDirect, int capacity) {
         // 非固定大小的协议头/字符串转换 buffer 不进入固定 chunk 池，避免回池后容量不一致。
         ByteBuffer byteBuffer = isDirect ? ByteBuffer.allocateDirect(capacity) : ByteBuffer.allocate(capacity);
-        return new ByteBuf(byteBuffer);
+        return new ByteBuf(byteBuffer, this);
     }
 
     /**
@@ -68,29 +69,31 @@ public class PooledByteBufAllocator {
      * @param buf 要回收的ByteBuf
      */
     public void recycle(ByteBuf buf) {
-        // 检查缓冲区是否已经被释放
-        try {
-            // 尝试访问缓冲区，如果已经被释放会抛出异常
-            buf.ensureAccessible();
-        } catch (IllegalStateException e) {
-            // 缓冲区已经被释放，直接返回
+        if (!buf.isCurrentForAllocator()) {
             return;
         }
 
-        if (buf.refCnt() != 1) {
+        if (!buf.isRootForAllocator()) {
+            buf.release();
+            return;
+        }
+
+        if (buf.refCnt() > 1) {
             // 仍有 retained slice 或组合视图持有时不能回池，否则会出现 use-after-recycle。
             return;
         }
 
-        // 检查池大小是否达到上限
-        Queue<ByteBuf> pool = buf.isDirect() ? directBufferPool : heapBufferPool;
-        if (pool.size() < MAX_POOL_SIZE) {
-            // 重置缓冲区的读写指针
-            buf.reset();
+        if (buf.refCnt() == 1) {
+            buf.release();
+            return;
+        }
+
+        Queue<ByteBuf> pool = buf.isDirectForAllocator() ? directBufferPool : heapBufferPool;
+        if (buf.capacityForAllocator() == bufferSize && pool.size() < MAX_POOL_SIZE) {
+            buf.markRecycledForAllocator();
             pool.offer(buf);
         } else {
-            // 池已满，释放缓冲区
-            buf.release();
+            buf.deallocateForAllocator();
         }
     }
 
@@ -101,12 +104,12 @@ public class PooledByteBufAllocator {
         // 释放直接内存缓冲区
         while (!directBufferPool.isEmpty()) {
             ByteBuf buf = directBufferPool.poll();
-            buf.release();
+            buf.deallocateForAllocator();
         }
         // 释放堆内存缓冲区
         while (!heapBufferPool.isEmpty()) {
             ByteBuf buf = heapBufferPool.poll();
-            buf.release();
+            buf.deallocateForAllocator();
         }
     }
 

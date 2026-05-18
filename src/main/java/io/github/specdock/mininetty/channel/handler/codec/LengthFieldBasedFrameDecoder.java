@@ -9,6 +9,9 @@ import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.util.LinkedList;
 
+/**
+ * @author 29287
+ */
 @FrameCodec
 public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     private final int lengthFieldLength;
