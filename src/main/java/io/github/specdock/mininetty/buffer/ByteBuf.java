@@ -5,14 +5,14 @@ import io.github.specdock.mininetty.channel.socket.SocketChannel;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author specdock
  * @Date 2026/2/25
  * @Time 21:14
  */
-public class ByteBuf {
+public class ByteBuf implements ReferenceCounted {
     // 全局静态缓存，避免运行时的反射查找开销
     private static final Object UNSAFE_INSTANCE;
     private static final Method INVOKE_CLEANER_METHOD;
@@ -63,22 +63,35 @@ public class ByteBuf {
 
 
     private final ByteBuffer byteBuffer;
+    // retainedSlice 只创建视图，所有视图共享 root 的引用计数，避免 slice 单独清理导致 double free。
+    private final ByteBuf root;
+    private final AtomicInteger refCnt;
+    // 只有根 ByteBuf 拥有真实内存；派生视图 release 时只递减 root.refCnt。
+    private final boolean ownsMemory;
     private int writeIndex;
     private int readIndex;
 
 
-    // 防御性并发标志，防止 Double Free 导致 JVM 崩溃
-    private final AtomicBoolean isReleased = new AtomicBoolean(false);
-
-
     public ByteBuf(ByteBuffer byteBuffer){
         this.byteBuffer = byteBuffer;
+        this.root = this;
+        this.refCnt = new AtomicInteger(1);
+        this.ownsMemory = true;
         writeIndex = byteBuffer.position();
         readIndex = 0;
     }
 
+    private ByteBuf(ByteBuf root, ByteBuffer byteBuffer, int readIndex, int writeIndex) {
+        this.byteBuffer = byteBuffer;
+        this.root = root.root;
+        this.refCnt = this.root.refCnt;
+        this.ownsMemory = false;
+        this.readIndex = readIndex;
+        this.writeIndex = writeIndex;
+    }
+
     public void ensureAccessible() {
-        if (isReleased.get()) {
+        if (refCnt.get() <= 0) {
             throw new IllegalStateException("Illegal access: ByteBuf has already been released.");
             // 在 Netty 中通常会抛出专用的 IllegalReferenceCountException
         }
@@ -103,6 +116,9 @@ public class ByteBuf {
 
     public void read(byte[] focus, int offset, int length){
         ensureAccessible();
+        if (length > readableBytes()) {
+            throw new IndexOutOfBoundsException("Not enough readable bytes");
+        }
         byteBuffer.position(readIndex);
         byteBuffer.limit(writeIndex);
         byteBuffer.get(focus, offset, length);
@@ -112,6 +128,80 @@ public class ByteBuf {
     public int readableBytes(){
         ensureAccessible();
         return writeIndex - readIndex;
+    }
+
+    public byte readByte() {
+        ensureAccessible();
+        if (readableBytes() <= 0) {
+            throw new IndexOutOfBoundsException("No readable bytes");
+        }
+        byte b = byteBuffer.get(readIndex);
+        readIndex++;
+        return b;
+    }
+
+    public void skipBytes(int length) {
+        ensureAccessible();
+        if (length < 0 || length > readableBytes()) {
+            throw new IndexOutOfBoundsException("skipBytes out of range");
+        }
+        readIndex += length;
+    }
+
+    public void writeByte(int value) {
+        ensureAccessible();
+        if (writableBytes() < 1) {
+            throw new IndexOutOfBoundsException("No writable bytes");
+        }
+        byteBuffer.put(writeIndex++, (byte) value);
+    }
+
+    public void writeInt(int value) {
+        ensureAccessible();
+        if (writableBytes() < 4) {
+            throw new IndexOutOfBoundsException("No writable bytes");
+        }
+        byteBuffer.put(writeIndex++, (byte) ((value >>> 24) & 0xFF));
+        byteBuffer.put(writeIndex++, (byte) ((value >>> 16) & 0xFF));
+        byteBuffer.put(writeIndex++, (byte) ((value >>> 8) & 0xFF));
+        byteBuffer.put(writeIndex++, (byte) (value & 0xFF));
+    }
+
+    public void writeBytes(byte[] src) {
+        writeBytes(src, 0, src.length);
+    }
+
+    public void writeBytes(byte[] src, int offset, int length) {
+        ensureAccessible();
+        if (length > writableBytes()) {
+            throw new IndexOutOfBoundsException("No writable bytes");
+        }
+        ByteBuffer duplicate = byteBuffer.duplicate();
+        duplicate.position(writeIndex);
+        duplicate.put(src, offset, length);
+        writeIndex += length;
+    }
+
+    public ByteBuffer nioBuffer() {
+        ensureAccessible();
+        // 返回 duplicate/slice 视图，避免修改原 ByteBuffer 的 position/limit。
+        ByteBuffer duplicate = byteBuffer.duplicate();
+        duplicate.position(readIndex);
+        duplicate.limit(writeIndex);
+        return duplicate.slice();
+    }
+
+    public ByteBuf retainedSlice(int length) {
+        ensureAccessible();
+        if (length < 0 || length > readableBytes()) {
+            throw new IndexOutOfBoundsException("retainedSlice out of range");
+        }
+        // 切片与当前 ByteBuf 共享底层内存，必须 retain 保证下游持有期间 root 不被释放。
+        retain();
+        ByteBuffer duplicate = byteBuffer.duplicate();
+        duplicate.position(readIndex);
+        duplicate.limit(readIndex + length);
+        return new ByteBuf(root, duplicate.slice(), 0, length);
     }
 
     public int writableBytes(){
@@ -137,11 +227,40 @@ public class ByteBuf {
     }
 
 
-    public void release() {
-        // 利用 CAS 操作，确保底层物理清理只执行一次
-        if (isReleased.compareAndSet(false, true)) {
-            releaseNative(this.byteBuffer);
+    @Override
+    public int refCnt() {
+        return refCnt.get();
+    }
+
+    @Override
+    public ByteBuf retain() {
+        int count;
+        do {
+            count = refCnt.get();
+            if (count <= 0) {
+                throw new IllegalStateException("Illegal retain: ByteBuf has already been released.");
+            }
+        } while (!refCnt.compareAndSet(count, count + 1));
+        return this;
+    }
+
+    @Override
+    public boolean release() {
+        int count;
+        do {
+            count = refCnt.get();
+            if (count <= 0) {
+                throw new IllegalStateException("Illegal release: ByteBuf has already been released.");
+            }
+        } while (!refCnt.compareAndSet(count, count - 1));
+        if (count == 1) {
+            // 最后一个引用释放时，只允许 root 清理真实 direct memory。
+            if (root.ownsMemory) {
+                releaseNative(root.byteBuffer);
+            }
+            return true;
         }
+        return false;
     }
 
     public boolean isDirect(){

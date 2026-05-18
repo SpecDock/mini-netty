@@ -12,7 +12,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class PooledByteBufAllocator {
     // 默认缓冲区大小
-    private static final int DEFAULT_BUFFER_SIZE = 1024;
+    // 4KB
+    private static final int DEFAULT_BUFFER_SIZE = 1024 * 4;
     // 最大池大小
     private static final int MAX_POOL_SIZE = 1024;
 
@@ -56,6 +57,12 @@ public class PooledByteBufAllocator {
         return buf;
     }
 
+    public ByteBuf allocate(boolean isDirect, int capacity) {
+        // 非固定大小的协议头/字符串转换 buffer 不进入固定 chunk 池，避免回池后容量不一致。
+        ByteBuffer byteBuffer = isDirect ? ByteBuffer.allocateDirect(capacity) : ByteBuffer.allocate(capacity);
+        return new ByteBuf(byteBuffer);
+    }
+
     /**
      * 回收ByteBuf到池中
      * @param buf 要回收的ByteBuf
@@ -67,6 +74,11 @@ public class PooledByteBufAllocator {
             buf.ensureAccessible();
         } catch (IllegalStateException e) {
             // 缓冲区已经被释放，直接返回
+            return;
+        }
+
+        if (buf.refCnt() != 1) {
+            // 仍有 retained slice 或组合视图持有时不能回池，否则会出现 use-after-recycle。
             return;
         }
 

@@ -1,5 +1,6 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.buffer.ReferenceCounted;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
@@ -357,7 +358,9 @@ public class DefaultChannelPipeline implements ChannelPipeline{
 
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
-
+            if (msg instanceof ReferenceCounted) {
+                ((ReferenceCounted) msg).release();
+            }
             // 因为是TailContext，所以最后的信息应该销毁掉，不应该再继续传递
         }
 

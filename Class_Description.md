@@ -41,31 +41,64 @@
 ### `ByteBuf`
 **位置**: `io.github.specdock.mininetty.buffer.ByteBuf`
 
-对 `java.nio.ByteBuffer` 的封装，提供读写索引管理。
+对 `java.nio.ByteBuffer` 的封装，提供读写索引管理、引用计数和零拷贝切片能力。
 
 **主要职责**:
 - 封装 `ByteBuffer`，维护 `writeIndex` 和 `readIndex`
 - 支持从 `SocketChannel` 读取数据到缓冲区
 - 支持从缓冲区读取数据到字节数组
 - 支持将缓冲区数据写入 `SocketChannel`
+- 实现 `ReferenceCounted`，通过 `refCnt()`、`retain()`、`release()` 管理堆外内存生命周期
+- 支持 `retainedSlice(length)` 创建共享底层内存的切片视图，避免 payload 拷贝
+- 支持 `nioBuffer()` 暴露当前可读区间的 `ByteBuffer` 视图，用于 NIO 写出
+- 支持 `readByte()`、`skipBytes()`、`writeByte()`、`writeInt()`、`writeBytes()` 等基础读写操作
 - 提供 `release()` 方法释放直接内存（通过 sun.misc.Unsafe 或 sun.nio.ch.DirectBuffer.cleaner）
-- 使用 `AtomicBoolean isReleased` 防止 Double Free
+- 使用共享 `AtomicInteger refCnt` 防止 Double Free 和提前释放
 - 支持直接内存和堆内存缓冲区的判断
+
+---
+
+### `ReferenceCounted`
+**位置**: `io.github.specdock.mininetty.buffer.ReferenceCounted`
+
+引用计数接口，用于统一管理堆外内存和组合缓冲区的生命周期。
+
+**主要职责**:
+- 定义 `refCnt()` 查询当前引用数量
+- 定义 `retain()` 增加一次持有关系
+- 定义 `release()` 释放一次持有关系，引用归零时触发真实资源释放
+- 作为 `ByteBuf`、`CompositeByteBuf`、`ByteBufChain` 的公共释放契约
+
+---
+
+### `CompositeByteBuf`
+**位置**: `io.github.specdock.mininetty.buffer.CompositeByteBuf`
+
+多段 `ByteBuf` 的零拷贝组合视图，用于将多个缓冲区表现为一个逻辑连续缓冲区。
+
+**主要职责**:
+- 使用组件列表保存 `ByteBuf` 或嵌套 `CompositeByteBuf`
+- 支持长度头 + payload、心跳头 + payload、跨 chunk frame 的零拷贝组合
+- 支持 `readByte()`、`skipBytes()`、`read(byte[])` 跨组件顺序读取
+- 支持 `nioBuffers()` 返回多个 `ByteBuffer` 视图，用于 `SocketChannel.write(ByteBuffer[])` gathering write
+- 实现 `ReferenceCounted`，自身释放归零时级联释放所有 component
 
 ---
 
 ### `ByteBufChain`
 **位置**: `io.github.specdock.mininetty.buffer.ByteBufChain`
 
-链表结构的缓冲区管理器，用于处理多个 `ByteBuf`。
+链表结构的缓冲区管理器，用于处理多个入站 `ByteBuf`，并支持零拷贝切出完整 frame。
 
 **主要职责**:
 - 使用 `LinkedList<ByteBuf>` 存储多个 ByteBuf 组成缓冲链
 - 支持从 SocketChannel 持续读取数据直到无可读字节
 - 支持从链表中读取指定长度的字节数据
-- 自动回收已读空的 ByteBuf 到池中
+- 支持 `readRetainedFrame(length)` 从链中切出 `ByteBuf` / `CompositeByteBuf` frame，不复制 payload
+- 支持 `readableBytes()`、`readByte()`、`skipBytes()` 等顺序消费操作
+- 已读空的 ByteBuf 通过引用计数 `release()` 释放，若存在 retained slice 则由引用计数保护底层内存
 - 自动创建新的 ByteBuf 当当前缓冲区写满时
-- `recycle()` 方法释放所有缓冲区到池中
+- `recycle()` 兼容旧 API，当前委托到 `release()` 释放链内剩余缓冲区
 
 ---
 
@@ -78,7 +111,8 @@
 - 维护直接内存缓冲区池（`directBufferPool`）和堆内存缓冲区池（`heapBufferPool`）
 - 默认缓冲区大小 1024 字节，最大池大小 1024
 - `allocate(isDirect)` 方法从池中获取缓冲区，池空时创建新的
-- `recycle(ByteBuf)` 方法将缓冲区重置后归还池中
+- `allocate(isDirect, capacity)` 支持创建非默认容量缓冲区，主要用于协议头和字符串转换边界
+- `recycle(ByteBuf)` 方法在 `refCnt == 1` 时将缓冲区重置后归还池中，避免仍有 slice 持有时回池
 - 池满时调用 `ByteBuf.release()` 释放直接内存
 - `close()` 方法关闭分配器并释放所有池中缓冲区
 
@@ -87,12 +121,13 @@
 ### `SimpleByteArray`
 **位置**: `io.github.specdock.mininetty.buffer.SimpleByteArray`
 
-简单的字节数组包装类。
+简单的字节数组包装类，当前主要作为历史兼容类型保留。
 
 **主要职责**:
 - 封装字节数组 `bytes` 和索引范围 `[begin, end)`
 - 提供边界检查（begin >= 0, end <= bytes.length, begin <= end）
 - 无参构造抛出异常
+- 主入站链路已切换为 `ByteBuf` / `CompositeByteBuf`，仅保留兼容旧 handler 或测试代码
 
 ---
 
@@ -129,6 +164,7 @@
 **主要职责**:
 - 定义获取远程地址（`getRemoveAddress`）和本地地址（`getLocalAddress`）
 - 定义 `write(ByteBuffer)` 方法向通道写入数据
+- 定义 `write(ByteBuffer[])` 方法支持 gathering write，直接写出 `CompositeByteBuf` 的多段 NIO buffer
 - 定义 `finishConnect()` 方法完成非阻塞连接
 
 ---
@@ -226,6 +262,7 @@
 - 实现所有事件触发和传播方法
 - 内部类 `HeadContext`：同时实现 `ChannelOutboundHandler` 和 `ChannelInboundHandler`，负责将出站写入操作写入 `ChannelOutboundBuffer`
 - 内部类 `TailContext`：同时实现 `ChannelOutboundHandler` 和 `ChannelInboundHandler`，作为链尾哨兵，消费所有传播到此处的事件
+- `TailContext.channelRead` 会对未被业务消费的 `ReferenceCounted` 消息执行兜底 `release()`，避免入站缓冲泄露
 
 ---
 
@@ -280,14 +317,16 @@
 ### `ChannelOutboundBuffer`
 **位置**: `io.github.specdock.mininetty.channel.ChannelOutboundBuffer`
 
-出站缓冲区，用于缓存待发送的数据。
+出站缓冲区，用于缓存待发送的数据，并统一接管出站 `ReferenceCounted` 消息的释放责任。
 
 **主要职责**:
 - 维护 `LinkedList<ByteBufSender>` 队列
-- `writeToBuffer`：将消息（ByteBuffer）和 Promise 添加到队列
+- `writeToBuffer`：将 `ByteBuf`、`CompositeByteBuf` 或兼容消息转换为 `ReferenceCounted` 后与 Promise 添加到队列
 - `flush`：将数据写入 Socket 发送缓冲区
+- 支持 `CompositeByteBuf.nioBuffers()` + `SocketChannel.write(ByteBuffer[])` 的 gathering write，避免合并拷贝
 - 支持 TCP 背压机制：当发送窗口满时注册 OP_WRITE 事件
-- 内部类 `ByteBufSender` 继承 `ByteBuf`，附加 Promise 用于异步操作完成通知
+- 队列写完后注销 OP_WRITE，避免空写事件反复触发
+- 内部类 `ByteBufSender` 持有 `ReferenceCounted` 消息和 Promise，写完成功 `release()` 并 `setSuccess()`，失败或关闭时 `release()` 并 `setFailure()`
 
 ---
 
@@ -367,6 +406,7 @@ NIO 客户端通道实现，封装 `java.nio.channels.SocketChannel`。
 - 实现 `connect()` 方法：非阻塞连接，支持 OP_CONNECT 事件
 - 实现 `finishConnect()` 方法：完成连接并触发 `fireChannelActive`
 - 维护 `ChannelOutboundBuffer` 用于出站数据缓冲
+- 实现 `write(ByteBuffer[])`，支持 `CompositeByteBuf` 多段 buffer 聚集写出
 - 实现 `close()` 方法：触发 `fireChannelInactive`、取消 SelectionKey、关闭底层通道
 
 ---
@@ -431,13 +471,15 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 ### `LengthFieldBasedFrameDecoder`
 **位置**: `io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameDecoder`
 
-基于长度字段的帧解码器，继承 `ChannelInboundHandler`，带 `@FrameCodec` 注解。
+基于长度字段的帧解码器，继承 `ChannelInboundHandler`，带 `@FrameCodec` 注解，输出零拷贝 frame。
 
 **主要职责**:
 - 解析粘包/拆包问题，使用长度字段（默认4字节）标识帧长度
 - 从 `ByteBufChain` 链中读取数据
-- 先读取长度字段解析帧长度，再读取完整帧数据
-- 将完整帧数据包装为 `SimpleByteArray` 传递给下一个 handler
+- 先读取长度字段解析帧长度，长度字段作为协议元数据允许少量字节复制
+- 完整帧数据通过 `ByteBufChain.readRetainedFrame()` 切出 `ByteBuf` / `CompositeByteBuf`，不复制 payload
+- 支持跨多个 `ByteBufChain` 聚合完整 frame
+- 将 `ReferenceCounted` frame 传递给下一个 handler，由后续 handler 按消费/透传规则释放
 - 支持长度字段为0的空帧处理
 
 ---
@@ -449,7 +491,10 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 
 **主要职责**:
 - 在发送数据前添加4字节长度的帧头
-- `createTargetBuffer()` 创建 [长度(4字节) + 数据] 格式的字节数组
+- 支持 1 到 4 字节长度字段，并按大端序写入 direct `ByteBuf` header
+- 使用 `CompositeByteBuf` 组合长度头和 payload，不再创建 [长度 + 数据] 的新字节数组
+- 支持 `ReferenceCounted` 作为主出站消息类型，并保留 `byte[]` 兼容路径
+- 异常路径会释放已创建但未成功传递给下游的 buffer，避免泄露
 - 其他方法透传给下一个 handler
 
 ---
@@ -457,10 +502,12 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 ### `StringDecoder`
 **位置**: `io.github.specdock.mininetty.channel.handler.codec.StringDecoder`
 
-字符串解码器，实现 `ChannelInboundHandler`。
+字符串解码器，实现 `ChannelInboundHandler`，作为明确的入站类型转换边界。
 
 **主要职责**:
-- 将 `SimpleByteArray` 字节数组转换为 UTF-8 字符串
+- 将 `ByteBuf` / `CompositeByteBuf` 当前可读内容复制为 UTF-8 字符串
+- 转换完成后释放原始 `ReferenceCounted` 消息
+- 保留 `SimpleByteArray` 到 String 的兼容逻辑
 - 调用 `fireChannelRead(String)` 传递给下一个 handler
 
 ---
@@ -468,11 +515,12 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 ### `StringEncoder`
 **位置**: `io.github.specdock.mininetty.channel.handler.codec.StringEncoder`
 
-字符串编码器，实现 `ChannelOutboundHandler`。
+字符串编码器，实现 `ChannelOutboundHandler`，作为明确的出站类型转换边界。
 
 **主要职责**:
 - 将字符串转换为 UTF-8 字节数组
-- 调用 `ctx.write(byte[])` 传递给下一个 handler
+- 将 UTF-8 字节写入 direct `ByteBuf`
+- 调用 `ctx.write(ByteBuf)` 继续进入零拷贝出站链路
 
 ---
 
@@ -497,9 +545,10 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 
 **主要职责**:
 - 协议头：0x00 = 业务数据帧，0x01 = Ping，0x02 = Pong
-- `userEventTriggered`：收到读空闲事件时发送 Ping（PING_FRAME = new byte[]{1}）
-- `channelRead`：消费 Pong 回执；解析业务数据帧，剥离协议头后透传
-- `write`（出站拦截）：为业务数据补齐 0x00 协议头
+- `userEventTriggered`：收到读空闲事件时发送 direct `ByteBuf` Ping 帧
+- `channelRead`：消费 Pong 回执并释放消息；解析业务数据帧，通过 `readByte()` 推进读指针剥离协议头后透传
+- `write`（出站拦截）：使用 `CompositeByteBuf` 组合 0x00 协议头和业务 payload，不复制 payload
+- 支持历史 `SimpleByteArray` 入站兼容路径
 
 ---
 
@@ -510,9 +559,10 @@ NIO 事件循环组，管理多个 `NioEventLoop`。
 
 **主要职责**:
 - 协议头：0x00 = 业务数据帧，0x01 = Ping，0x02 = Pong
-- `channelRead`：收到 Ping 时回复 Pong（PONG_FRAME = new byte[]{2}）；解析业务数据帧，剥离协议头后透传
+- `channelRead`：收到 Ping 时回复 direct `ByteBuf` Pong 并释放原消息；解析业务数据帧，通过 `readByte()` 推进读指针剥离协议头后透传
 - `userEventTriggered`：收到读空闲事件时关闭超时连接
-- `write`（出站拦截）：为业务数据补齐 0x00 协议头
+- `write`（出站拦截）：使用 `CompositeByteBuf` 组合 0x00 协议头和业务 payload，不复制 payload
+- 支持历史 `SimpleByteArray` 入站兼容路径
 
 ---
 
@@ -631,6 +681,8 @@ bootstrap/
 
 buffer/
 ├── ByteBuf            - ByteBuffer 封装
+├── ReferenceCounted   - 引用计数契约
+├── CompositeByteBuf   - 多段 ByteBuf 零拷贝组合视图
 ├── ByteBufChain       - ByteBuf 链表管理器
 ├── PooledByteBufAllocator - 内存池分配器
 └── SimpleByteArray    - 字节数组包装

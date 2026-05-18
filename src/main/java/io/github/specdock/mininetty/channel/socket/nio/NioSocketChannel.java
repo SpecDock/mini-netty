@@ -8,6 +8,7 @@ import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.io.IOException;
 import java.net.SocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 
@@ -144,6 +145,7 @@ public class NioSocketChannel implements SocketChannel {
     private void doClose(Promise promise) {
         try {
             pipeline().fireChannelInactive();
+            channelOutboundBuffer.close();
             // 1. 幂等性校验：若已关闭则直接返回成功
             if (!socketChannel.isOpen()) {
                 promise.setSuccess();
@@ -269,6 +271,15 @@ public class NioSocketChannel implements SocketChannel {
     public int write(java.nio.ByteBuffer src){
         try {
             return socketChannel.write(src);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public long write(ByteBuffer[] srcs) {
+        try {
+            return socketChannel.write(srcs);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

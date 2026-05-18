@@ -4,6 +4,7 @@ import io.github.specdock.mininetty.channel.Channel;
 import io.github.specdock.mininetty.channel.ChannelOutboundBuffer;
 
 import java.net.SocketAddress;
+import java.nio.ByteBuffer;
 
 /**
  * @author specdock
@@ -16,7 +17,9 @@ public interface SocketChannel extends Channel {
 
     SocketAddress getLocalAddress();
 
-    int write(java.nio.ByteBuffer src);
+    int write(ByteBuffer src);
+
+    long write(ByteBuffer[] srcs);
 
 
     void finishConnect();

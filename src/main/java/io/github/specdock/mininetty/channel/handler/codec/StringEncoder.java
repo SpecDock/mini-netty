@@ -1,5 +1,6 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
+import io.github.specdock.mininetty.buffer.ByteBuf;
 import io.github.specdock.mininetty.channel.ChannelHandlerContext;
 import io.github.specdock.mininetty.channel.ChannelOutboundHandler;
 import io.github.specdock.mininetty.channel.DefaultChannelPromise;
@@ -7,6 +8,7 @@ import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 
 /**
  * @author specdock
@@ -38,7 +40,11 @@ public class StringEncoder implements ChannelOutboundHandler {
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
         System.out.println("StringEncoder");
         String s = (String) msg;
-        ctx.write(s.getBytes(StandardCharsets.UTF_8), promise);
+        // 字符串编码是允许的类型转换边界；转换后继续以 direct ByteBuf 进入零拷贝出站链路。
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
+        buf.writeBytes(bytes);
+        ctx.write(buf, promise);
         return promise;
     }
 

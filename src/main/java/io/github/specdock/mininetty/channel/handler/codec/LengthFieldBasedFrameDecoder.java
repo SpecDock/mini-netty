@@ -1,44 +1,34 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
-import io.github.specdock.mininetty.buffer.SimpleByteArray;
+import io.github.specdock.mininetty.buffer.CompositeByteBuf;
+import io.github.specdock.mininetty.buffer.ReferenceCounted;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
 import java.util.LinkedList;
 
-/**
- * @author specdock
- * @Date 2026/2/26
- * @Time 14:41
- */
-
 @FrameCodec
 public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     private final int lengthFieldLength;
     private int lengthField;
-    private byte[] lengthFieldBytes;
-    private int lengthFieldOffset;
-
-    private byte[] target;
-    private int targetOffset;
-
+    private final byte[] lengthFieldBytes;
     private final LinkedList<ByteBufChain> byteBufChainList;
 
     public LengthFieldBasedFrameDecoder(int lengthFieldLength){
+        if (lengthFieldLength < 1 || lengthFieldLength > 4) {
+            throw new IllegalArgumentException("lengthFieldLength must be between 1 and 4");
+        }
         this.lengthFieldLength = lengthFieldLength;
-        byteBufChainList = new LinkedList<>();
-        lengthField = 0;
-        target = null;
-        lengthFieldOffset = 0;
-        targetOffset = 0;
+        this.lengthFieldBytes = new byte[lengthFieldLength];
+        this.byteBufChainList = new LinkedList<>();
+        this.lengthField = -1;
     }
 
     public LengthFieldBasedFrameDecoder(){
         this(4);
     }
-
 
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) {
@@ -59,61 +49,62 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         System.out.println("LengthFieldBasedFrameDecoder");
         byteBufChainList.addLast((ByteBufChain) msg);
-        while(true){
-            if(byteBufChainList.isEmpty()){
-                return ;
+        while (true) {
+            discardEmptyChains();
+            if (byteBufChainList.isEmpty()) {
+                return;
             }
-            ByteBufChain byteBufChain = byteBufChainList.getFirst();
-            if(byteBufChain.length() <= 0){
-                byteBufChainList.remove(0);
-                continue;
-            }
-            if(target == null){
-                if(lengthFieldLength - lengthFieldOffset > byteBufChainListLength()){
+            if (lengthField < 0) {
+                if (byteBufChainListLength() < lengthFieldLength) {
                     return;
                 }
-                if(lengthFieldBytes == null){
-                    lengthFieldBytes = new byte[lengthFieldLength];
-                }
-
-                int readLength = Math.min(lengthFieldLength - lengthFieldOffset, byteBufChain.length());
-                byteBufChain.read(lengthFieldBytes, lengthFieldOffset, readLength);
-                lengthFieldOffset += readLength;
-
-                if(lengthFieldOffset < lengthFieldLength){
-                    continue;
-                }
-
-                lengthFieldOffset = 0;
+                readBytesFromChains(lengthFieldBytes, 0, lengthFieldLength);
                 lengthField = bytesToInt(lengthFieldBytes);
-                target = new byte[lengthField];
-                if(lengthField == 0){
-                    ctx.fireChannelRead(new SimpleByteArray(target, 0, target.length));
-                    target = null;
-                    continue;
-                }
             }
-            int readLength = Math.min(lengthField, byteBufChain.length());
-            if(readLength <= 0){
-                continue;
+            if (byteBufChainListLength() < lengthField) {
+                return;
             }
-            byteBufChain.read(target, targetOffset, readLength);
-            targetOffset += readLength;
-            lengthField -= readLength;
-            if(lengthField > 0){
-                continue;
-            }
-            ctx.fireChannelRead(new SimpleByteArray(target, 0, target.length));
-            lengthField = 0;
-            target = null;
-            targetOffset = 0;
+            ReferenceCounted frame = readFrameFromChains(lengthField);
+            lengthField = -1;
+            ctx.fireChannelRead(frame);
         }
+    }
+
+    private void discardEmptyChains() {
+        while (!byteBufChainList.isEmpty() && byteBufChainList.getFirst().readableBytes() <= 0) {
+            byteBufChainList.removeFirst().release();
+        }
+    }
+
+    private void readBytesFromChains(byte[] target, int offset, int length){
+        // 长度字段属于协议元数据，允许少量复制；payload 仍通过 readFrameFromChains 零拷贝输出。
+        while(length > 0){
+            ByteBufChain chain = byteBufChainList.getFirst();
+            int read = Math.min(length, chain.readableBytes());
+            chain.read(target, offset, read);
+            offset += read;
+            length -= read;
+            discardEmptyChains();
+        }
+    }
+
+    private ReferenceCounted readFrameFromChains(int length){
+        CompositeByteBuf frame = new CompositeByteBuf();
+        while(length > 0){
+            ByteBufChain chain = byteBufChainList.getFirst();
+            int read = Math.min(length, chain.readableBytes());
+            // 每个 ByteBufChain 片段都以 retained frame 形式加入，避免跨 OP_READ 拼帧时复制 payload。
+            frame.addComponent(chain.readRetainedFrame(read));
+            length -= read;
+            discardEmptyChains();
+        }
+        return frame;
     }
 
     private int byteBufChainListLength(){
         int sum = 0;
         for(ByteBufChain byteBufChain : byteBufChainList){
-            sum += byteBufChain.length();
+            sum += byteBufChain.readableBytes();
         }
         return sum;
     }
@@ -121,10 +112,7 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
     private int bytesToInt(byte[] bytes){
         int sum = 0;
         for (byte aByte : bytes) {
-            // 1. 将之前累加的值整体左移 8 位（腾出一个字节的空间）
             sum <<= 8;
-
-            // 2. 消除符号位扩展，并将其"镶嵌"到刚刚腾出的低 8 位空间中
             sum |= (aByte & 0xFF);
         }
         return sum;

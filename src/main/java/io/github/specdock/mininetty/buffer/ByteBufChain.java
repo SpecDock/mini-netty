@@ -2,18 +2,14 @@ package io.github.specdock.mininetty.buffer;
 
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.LinkedList;
-import java.util.List;
 
 /**
  * @author specdock
  * @Date 2026/2/25
  * @Time 21:15
  */
-public class ByteBufChain {
+public class ByteBufChain implements ReferenceCounted {
 
     private LinkedList<ByteBuf> bufferChain;
     private boolean isDirect;
@@ -42,7 +38,7 @@ public class ByteBufChain {
         while(length > 0){
             ByteBuf buf = bufferChain.getFirst();
             if(buf.readableBytes() <= 0){
-                allocator.recycle(buf);
+                buf.release();
                 bufferChain.remove(0);
                 continue;
             }
@@ -50,6 +46,73 @@ public class ByteBufChain {
             buf.read(target, offset, readLength);
             offset += readLength;
             length -= readLength;
+        }
+    }
+
+    public int readableBytes(){
+        return length();
+    }
+
+    public byte readByte(){
+        while(true){
+            ByteBuf buf = bufferChain.getFirst();
+            if(buf.readableBytes() <= 0){
+                buf.release();
+                bufferChain.removeFirst();
+                continue;
+            }
+            byte value = buf.readByte();
+            discardReadBuffers();
+            return value;
+        }
+    }
+
+    public void skipBytes(int length){
+        while(length > 0){
+            ByteBuf buf = bufferChain.getFirst();
+            if(buf.readableBytes() <= 0){
+                buf.release();
+                bufferChain.removeFirst();
+                continue;
+            }
+            int skip = Math.min(length, buf.readableBytes());
+            buf.skipBytes(skip);
+            length -= skip;
+            discardReadBuffers();
+        }
+    }
+
+    /**
+     * 从链上读取一个完整 frame 的零拷贝视图。
+     *
+     * <p>如果 frame 横跨多个 ByteBuf，会返回 CompositeByteBuf；每段通过 retainedSlice
+     * 保留底层内存引用，原链消费完的 chunk 可以安全 release。</p>
+     */
+    public ReferenceCounted readRetainedFrame(int length){
+        if(length < 0 || length > readableBytes()){
+            throw new IndexOutOfBoundsException("Not enough readable bytes for frame");
+        }
+        CompositeByteBuf composite = new CompositeByteBuf();
+        while(length > 0){
+            ByteBuf buf = bufferChain.getFirst();
+            if(buf.readableBytes() <= 0){
+                buf.release();
+                bufferChain.removeFirst();
+                continue;
+            }
+            int sliceLength = Math.min(length, buf.readableBytes());
+            // retainedSlice 保证 frame 交给下游后，底层 chunk 不会被链表回收提前释放。
+            composite.addComponent(buf.retainedSlice(sliceLength));
+            buf.skipBytes(sliceLength);
+            length -= sliceLength;
+            discardReadBuffers();
+        }
+        return composite;
+    }
+
+    private void discardReadBuffers(){
+        while(!bufferChain.isEmpty() && bufferChain.getFirst().readableBytes() <= 0){
+            bufferChain.removeFirst().release();
         }
     }
 
@@ -112,10 +175,35 @@ public class ByteBufChain {
      * 释放所有的ByteBuf到池中
      */
     public void recycle() {
+        release();
+    }
+
+    @Override
+    public int refCnt() {
+        return bufferChain.isEmpty() ? 0 : 1;
+    }
+
+    @Override
+    public ReferenceCounted retain() {
         for(ByteBuf buf : bufferChain){
-            allocator.recycle(buf);
+            buf.retain();
+        }
+        return this;
+    }
+
+    @Override
+    public boolean release() {
+        RuntimeException failure = null;
+        for(ByteBuf buf : bufferChain){
+            try {
+                buf.release();
+            } catch (RuntimeException e) {
+                if(failure == null) failure = e;
+            }
         }
         bufferChain.clear();
+        if(failure != null) throw failure;
+        return true;
     }
 
 

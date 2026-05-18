@@ -1,6 +1,5 @@
 package io.github.specdock.mininetty.channel;
 
-import com.sun.security.ntlm.Server;
 import io.github.specdock.mininetty.channel.handler.timeout.IdleStateHandler;
 import io.github.specdock.mininetty.channel.handler.timeout.ServerHeartbeatHandler;
 import io.github.specdock.mininetty.util.HeartbeatConstant;
