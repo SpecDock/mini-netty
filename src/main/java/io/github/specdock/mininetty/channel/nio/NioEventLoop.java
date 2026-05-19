@@ -184,6 +184,11 @@ public class NioEventLoop implements EventLoop {
         return thread == Thread.currentThread();
     }
 
+    @Override
+    public PooledByteBufAllocator allocator() {
+        return allocator;
+    }
+
     /**
      * TODO 待实现：分配 50% 的时间给定时任务和普通任务，另外 50% 的事件用来select()监听
      * 每提交一个任何任务（定时任务或者普通任务）会打断阻塞监听

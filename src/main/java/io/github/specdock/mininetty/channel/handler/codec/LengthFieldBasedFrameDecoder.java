@@ -1,7 +1,6 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBufChain;
-import io.github.specdock.mininetty.buffer.CompositeByteBuf;
 import io.github.specdock.mininetty.buffer.ReferenceCounted;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
@@ -67,7 +66,7 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
             if (byteBufChainListLength() < lengthField) {
                 return;
             }
-            ReferenceCounted frame = readFrameFromChains(lengthField);
+            ByteBufChain frame = lengthField == 0 ? new ByteBufChain(true, ctx.executor().allocator()) : readFrameFromChains(lengthField);
             lengthField = -1;
             ctx.fireChannelRead(frame);
         }
@@ -91,13 +90,12 @@ public class LengthFieldBasedFrameDecoder implements ChannelInboundHandler{
         }
     }
 
-    private ReferenceCounted readFrameFromChains(int length){
-        CompositeByteBuf frame = new CompositeByteBuf();
+    private ByteBufChain readFrameFromChains(int length){
+        ByteBufChain frame = new ByteBufChain(true, byteBufChainList.getFirst().allocator());
         while(length > 0){
             ByteBufChain chain = byteBufChainList.getFirst();
             int read = Math.min(length, chain.readableBytes());
-            // 每个 ByteBufChain 片段都以 retained frame 形式加入，避免跨 OP_READ 拼帧时复制 payload。
-            frame.addComponent(chain.readRetainedFrame(read));
+            frame.appendChain(chain.readRetainedFrame(read));
             length -= read;
             discardEmptyChains();
         }

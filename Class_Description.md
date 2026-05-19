@@ -1,736 +1,532 @@
 # Mini-Netty 类描述文档
 
-本文档详细描述 mini-netty 项目中每个类的职责和功能。
+本文档描述当前 mini-netty 项目的核心类职责、模块边界和主要数据流。项目是一个基于 Java NIO 的 mini-netty demo，包含启动器、Channel/EventLoop、Pipeline/Handler、池化 ByteBuf、编解码、心跳和定时任务等核心组件。
+
+---
+
+## 总体架构
+
+当前主链路采用固定大小池化 direct chunk + `ByteBufChain` 链式聚合模型：
+
+```text
+String / 业务对象
+  -> Encoder / Coder
+  -> ByteBufChain(4KB pooled ByteBuf chunks)
+  -> ChannelOutboundBuffer
+  -> SocketChannel.write(ByteBuffer[])
+```
+
+关键约束：
+
+- 常规出站主路径使用 `ByteBufChain`。
+- `StringEncoder` 通过 `CharsetEncoder` 直接编码到池化 chunk，不创建中间 `byte[]`。
+- `ChannelOutboundBuffer` 对 `ByteBufChain` 使用 gathering write，不合并多 chunk。
+- 裸 `ByteBuffer` 不作为业务出站入口；调用方应通过 coder/encoder 输出 `ByteBufChain` 或框架内 `ReferenceCounted`。
+- `CompositeByteBuf` 保留为兼容/遗留视图层，不再作为 frame/header 的主路径组合类型。
+- `SimpleByteArray` 已删除。
 
 ---
 
 ## Bootstrap 模块
 
 ### `Bootstrap`
-**位置**: `io.github.specdock.mininetty.bootstrap.Bootstrap`
 
 客户端启动辅助类，负责创建客户端通道并建立远程连接。
 
-**主要职责**:
-- 配置 `EventLoopGroup`（worker 线程组）
-- 指定 `SocketChannel` 类型（NIO 通道）
-- 配置业务 handler 到 channel 的 pipeline
-- 通过 `connect()` 方法连接远程服务器
-- 连接流程：通道实例化 → Pipeline 初始化 → Promise 创建 → EventLoop 注册 → 触发物理连接
+主要职责：
 
----
+- 配置 worker `EventLoopGroup`。
+- 指定客户端 `SocketChannel` 类型。
+- 配置业务 `ChannelInitializer`。
+- 通过 `connect()` 创建通道、初始化 pipeline、注册到 EventLoop 并发起非阻塞连接。
 
 ### `ServerBootstrap`
-**位置**: `io.github.specdock.mininetty.bootstrap.ServerBootstrap`
 
 服务端启动辅助类，负责创建服务端通道并绑定端口。
 
-**主要职责**:
-- 配置 boss 和 workers 两个 `EventLoopGroup`
-- 指定 `ServerSocketChannel` 类型
-- 配置 handler（boss 组）和 childHandler（workers 组新连接）
-- 通过 `bind()` 方法绑定端口
-- 内部包含 `ServerBootstrapAcceptor` 内部类，负责将新连接的 childHandler 注入 pipeline 并注册到 workers
+主要职责：
 
-**ServerBootstrapAcceptor**: 内部类，实现了 `ChannelInboundHandler`。当 boss 监听到新连接（OP_ACCEPT）时，`channelRead` 方法会被触发，它将 `childHandler` 添加到新连接的 pipeline 中，并将新连接注册到 workers 线程组。
+- 配置 boss 和 worker 两组 `EventLoopGroup`。
+- 指定 `ServerSocketChannel` 类型。
+- 配置 boss handler 和 child handler。
+- 通过 `bind()` 创建服务端通道、注册 OP_ACCEPT 并监听端口。
+- 内部 `ServerBootstrapAcceptor` 负责接收新连接、注入 child handler 并注册到 worker。
 
 ---
 
 ## Buffer 模块
 
-### `ByteBuf`
-**位置**: `io.github.specdock.mininetty.buffer.ByteBuf`
-
-对 `java.nio.ByteBuffer` 的封装，提供读写索引管理、引用计数和零拷贝切片能力。
-
-**主要职责**:
-- 封装 `ByteBuffer`，维护 `writeIndex` 和 `readIndex`
-- 支持从 `SocketChannel` 读取数据到缓冲区
-- 支持从缓冲区读取数据到字节数组
-- 支持将缓冲区数据写入 `SocketChannel`
-- 实现 `ReferenceCounted`，通过 `refCnt()`、`retain()`、`release()` 管理堆外内存生命周期
-- 支持 `retainedSlice(length)` 创建共享底层内存的切片视图，避免 payload 拷贝
-- 支持 `nioBuffer()` 暴露当前可读区间的 `ByteBuffer` 视图，用于 NIO 写出
-- 支持 `readByte()`、`skipBytes()`、`writeByte()`、`writeInt()`、`writeBytes()` 等基础读写操作
-- 提供 `release()` 方法管理生命周期：池化 root 在引用归零时回交 `PooledByteBufAllocator`，非池化 root 释放直接内存（通过 sun.misc.Unsafe 或 sun.nio.ch.DirectBuffer.cleaner）
-- 使用共享 `AtomicInteger refCnt` 防止 Double Free 和提前释放
-- 支持直接内存和堆内存缓冲区的判断
-
----
-
 ### `ReferenceCounted`
-**位置**: `io.github.specdock.mininetty.buffer.ReferenceCounted`
 
-引用计数接口，用于统一管理堆外内存和组合缓冲区的生命周期。
+引用计数契约。
 
-**主要职责**:
-- 定义 `refCnt()` 查询当前引用数量
-- 定义 `retain()` 增加一次持有关系
-- 定义 `release()` 释放一次持有关系，引用归零时触发真实资源释放
-- 作为 `ByteBuf`、`CompositeByteBuf`、`ByteBufChain` 的公共释放契约
+主要职责：
 
----
+- `refCnt()` 查询当前引用计数。
+- `retain()` 增加引用。
+- `release()` 释放引用，引用归零时触发资源释放或回池。
 
-### `CompositeByteBuf`
-**位置**: `io.github.specdock.mininetty.buffer.CompositeByteBuf`
+### `ByteBuf`
 
-多段 `ByteBuf` 的零拷贝组合视图，用于将多个缓冲区表现为一个逻辑连续缓冲区。
+对 `ByteBuffer` 的封装，是底层 chunk 和 retained slice 的承载类型。
 
-**主要职责**:
-- 使用组件列表保存 `ByteBuf` 或嵌套 `CompositeByteBuf`
-- 支持长度头 + payload、心跳头 + payload、跨 chunk frame 的零拷贝组合
-- 支持 `readByte()`、`skipBytes()`、`read(byte[])` 跨组件顺序读取
-- 支持 `nioBuffers()` 返回多个 `ByteBuffer` 视图，用于 `SocketChannel.write(ByteBuffer[])` gathering write
-- 实现 `ReferenceCounted`，自身释放归零时级联释放所有 component
+主要职责：
 
----
+- 维护 `readIndex` / `writeIndex`。
+- 支持 `readByte()`、`read(...)`、`skipBytes(...)`、`writeByte(...)`、`writeInt(...)`、`writeBytes(...)`。
+- 支持 `nioBuffer()` 暴露当前可读区间视图。
+- 支持 `writableNioBuffer()` 暴露当前可写区间视图。
+- 支持 `advanceWriterIndex(int)` 配合 encoder 直接写入 NIO view。
+- 支持 `retainedSlice(int)` 创建共享 root 引用计数的零拷贝切片。
+- root `ByteBuf` 引用归零后，如果来自 `PooledByteBufAllocator`，则回到 allocator；非池化 root 才释放底层 direct memory。
 
 ### `ByteBufChain`
-**位置**: `io.github.specdock.mininetty.buffer.ByteBufChain`
 
-链表结构的缓冲区管理器，用于处理多个入站 `ByteBuf`，并支持零拷贝切出完整 frame。
+固定 chunk 链式缓冲容器，是当前入站/出站主数据结构。
 
-**主要职责**:
-- 使用 `LinkedList<ByteBuf>` 存储多个 ByteBuf 组成缓冲链
-- 支持从 SocketChannel 持续读取数据直到无可读字节
-- 支持从链表中读取指定长度的字节数据
-- 支持 `readRetainedFrame(length)` 从链中切出 `ByteBuf` / `CompositeByteBuf` frame，不复制 payload
-- 支持 `readableBytes()`、`readByte()`、`skipBytes()` 等顺序消费操作
-- 已读空的 ByteBuf 通过引用计数 `release()` 释放，若存在 retained slice 则由引用计数保护底层内存
-- 自动创建新的 ByteBuf 当当前缓冲区写满时
-- `recycle()` 兼容旧 API，当前委托到 `release()` 释放链内剩余缓冲区
+主要职责：
 
----
+- 使用 `LinkedList<ByteBuf>` 管理多个池化 chunk。
+- 维护 cached `readableBytes`，避免每次遍历链表。
+- 支持跨 chunk `readByte()`、`read(...)`、`skipBytes(...)`。
+- 支持跨 chunk `writeByte(...)`、`writeInt(...)`、`writeBytes(...)`。
+- 支持 `nioBuffers(int maxCount)` 返回多段可读 `ByteBuffer` 视图，用于 gathering write。
+- 支持 `writableNioBuffer()` / `advanceWriterIndex(int)`，供 `CharsetEncoder` 等直接写入池化 direct chunk。
+- 支持 `readRetainedFrame(int)` 返回新的 `ByteBufChain` retained slice 视图，不复制 payload。
+- 支持 `append(ByteBuf)` 和 `appendChain(ByteBufChain)` 转移组件所有权。
+- `release()` 归零时级联释放链内所有 `ByteBuf`。
+
+### `CompositeByteBuf`
+
+多段 `ReferenceCounted` 的零拷贝组合视图，当前作为兼容/遗留层保留。
+
+主要职责：
+
+- 使用组件列表保存 `ByteBuf`、`ByteBufChain` 或嵌套 `CompositeByteBuf`。
+- 不复制底层字节，只按顺序读取各 component。
+- 支持 `readByte()`、`read(...)`、`skipBytes(...)`。
+- 支持 `nioBuffers()` 收集多段 NIO view，用于 gathering write。
+- 自身 `release()` 归零时逐个释放 component。
 
 ### `PooledByteBufAllocator`
-**位置**: `io.github.specdock.mininetty.buffer.PooledByteBufAllocator`
 
-池化内存分配器，减少内存分配和释放的开销。
+固定大小 chunk 的池化分配器。
 
-**主要职责**:
-- 维护直接内存缓冲区池（`directBufferPool`）和堆内存缓冲区池（`heapBufferPool`）
-- 默认缓冲区大小 1024 字节，最大池大小 1024
-- `allocate(isDirect)` 方法从池中获取缓冲区，池空时创建新的
-- `allocate(isDirect, capacity)` 支持创建非默认容量缓冲区，主要用于协议头和字符串转换边界
-- `recycle(ByteBuf)` 方法接收引用归零的池化 root buffer，并统一判断默认容量回池、非默认容量或池满时释放底层内存
-- 回池对象在再次 `allocate()` 返回前保持不可访问状态，避免旧生命周期句柄误访问；复用时再重置读写索引和引用计数
-- `close()` 方法关闭分配器并释放所有池中缓冲区
+主要职责：
 
----
-
-### `SimpleByteArray`
-**位置**: `io.github.specdock.mininetty.buffer.SimpleByteArray`
-
-简单的字节数组包装类，当前主要作为历史兼容类型保留。
-
-**主要职责**:
-- 封装字节数组 `bytes` 和索引范围 `[begin, end)`
-- 提供边界检查（begin >= 0, end <= bytes.length, begin <= end）
-- 无参构造抛出异常
-- 主入站链路已切换为 `ByteBuf` / `CompositeByteBuf`，仅保留兼容旧 handler 或测试代码
+- 默认 chunk 大小为 `4 * 1024`。
+- 维护 direct / heap 两类 `ByteBuf` 池。
+- `allocate(boolean)` 分配默认大小 chunk。
+- `recycle(ByteBuf)` 接收引用归零的池化 root，默认大小 chunk 回池，非默认容量或池满时释放。
+- 回池对象复用前保持不可访问状态，重新分配时重置读写索引、引用计数和生命周期代次。
+- `close()` 释放池内剩余缓冲区。
 
 ---
 
 ## Channel 模块
 
 ### `Channel`
-**位置**: `io.github.specdock.mininetty.channel.Channel`
 
-通道接口，定义通道的核心操作。
+通道核心接口。
 
-**主要职责**:
-- 定义通道的绑定（`bind`）、连接（`connect`）、关闭（`close`）操作
-- 定义 Selector 注册操作（`register`、`unregister`）
-- 定义获取 `SelectionKey`、`EventLoop`、`ChannelPipeline`、`ChannelOutboundBuffer` 的方法
-- 定义通道状态查询方法：`isOpen()`、`isActive()`、`isRegistered()`
+主要职责：
 
----
+- 定义 `bind`、`connect`、`close`。
+- 定义 Selector 注册/注销操作。
+- 暴露 `SelectionKey`、`EventLoop`、`ChannelPipeline`、`ChannelOutboundBuffer`。
+- 查询通道状态：`isOpen()`、`isActive()`、`isRegistered()`。
 
 ### `ServerChannel`
-**位置**: `io.github.specdock.mininetty.channel.ServerChannel`
 
-服务端通道接口，继承自 `Channel`。
-
-**主要职责**:
-- 扩展 `Channel` 接口，增加 `accept()` 方法用于接受客户端连接
-
----
+服务端通道接口，扩展 `Channel` 并增加 `accept()`。
 
 ### `SocketChannel`
-**位置**: `io.github.specdock.mininetty.channel.socket.SocketChannel`
 
-客户端通道接口，继承自 `Channel`。
+客户端/连接通道接口。
 
-**主要职责**:
-- 定义获取远程地址（`getRemoveAddress`）和本地地址（`getLocalAddress`）
-- 定义 `write(ByteBuffer)` 方法向通道写入数据
-- 定义 `write(ByteBuffer[])` 方法支持 gathering write，直接写出 `CompositeByteBuf` 的多段 NIO buffer
-- 定义 `finishConnect()` 方法完成非阻塞连接
+主要职责：
 
----
+- 获取远端和本地地址。
+- 支持 `write(ByteBuffer)` 单段写。
+- 支持 `write(ByteBuffer[])` gathering write。
+- 支持 `finishConnect()` 完成非阻塞连接。
 
 ### `ChannelHandler`
-**位置**: `io.github.specdock.mininetty.channel.ChannelHandler`
 
-通道处理器接口，定义 handler 的生命周期和事件处理方法。
+handler 根接口，定义入站和出站事件方法。
 
-**主要职责**:
-- 定义入站事件处理：`channelRegistered`、`channelActive`、`channelInactive`、`channelRead`、`userEventTriggered`
-- 定义出站事件处理：`write`、`flush`
-- 出站方法返回 `Future` 用于异步操作追踪
+主要职责：
 
----
+- 入站：`channelRegistered`、`channelActive`、`channelInactive`、`channelRead`、`userEventTriggered`。
+- 出站：`write`、`flush`。
 
-### `ChannelInboundHandler`
-**位置**: `io.github.specdock.mininetty.channel.ChannelInboundHandler`
+### `ChannelInboundHandler` / `ChannelOutboundHandler`
 
-入站处理器接口，继承自 `ChannelHandler`。
-
-**主要职责**:
-- 用于处理入站数据和控制事件
-- 如 `channelRead` 用于处理读取的数据
-
----
-
-### `ChannelOutboundHandler`
-**位置**: `io.github.specdock.mininetty.channel.ChannelOutboundHandler`
-
-出站处理器接口，继承自 `ChannelHandler`。
-
-**主要职责**:
-- 用于处理出站数据和控制事件
-- 如 `write` 用于处理写入的数据，`flush` 用于刷新发送缓冲区
-
----
+分别表示入站和出站处理器接口，用于区分事件传播方向。
 
 ### `ChannelHandlerContext`
-**位置**: `io.github.specdock.mininetty.channel.ChannelHandlerContext`
 
-通道处理器上下文接口，提供组件获取和事件传播能力。
+pipeline 节点上下文。
 
-**主要职责**:
-- 组件获取：`channel()`、`executor()`、`pipeline()`、`handler()`
-- 入站事件传播（向后传播）：`fireChannelRegistered`、`fireChannelActive`、`fireChannelInactive`、`fireChannelRead`、`fireChannelReadComplete`、`fireUserEventTriggered`
-- 出站事件请求（向前传播）：`bind`、`connect`、`write`、`flush`、`writeAndFlush`
+主要职责：
 
----
+- 获取 `channel()`、`executor()`、`pipeline()`、`handler()`。
+- 向后传播入站事件。
+- 向前传播出站请求。
 
 ### `AbstractChannelHandlerContext`
-**位置**: `io.github.specdock.mininetty.channel.AbstractChannelHandlerContext`
 
-`ChannelHandlerContext` 的抽象基类，实现双向链表节点功能。
-
-**主要职责**:
-- 实现链表节点：`prev`、`next`
-- 实现事件传播：入站事件传播给下一个 handler，出站事件传播给上一个 handler
-- 提供组件获取方法的默认实现
-
----
+上下文抽象基类，维护双向链表节点并实现入站/出站事件传播。
 
 ### `DefaultChannelHandlerContext`
-**位置**: `io.github.specdock.mininetty.channel.DefaultChannelHandlerContext`
 
-`ChannelHandlerContext` 的默认实现类。
-
-**主要职责**:
-- 继承 `AbstractChannelHandlerContext`
-- 实现 `handler()` 方法返回关联的 handler
-
----
+默认上下文实现，持有关联 handler。
 
 ### `ChannelPipeline`
-**位置**: `io.github.specdock.mininetty.channel.ChannelPipeline`
 
-通道管道接口，管理多个 `ChannelHandler` 的链表。
+handler 链接口。
 
-**主要职责**:
-- Handler 管理：`addFirst`、`addLast`、`addAfter`、`addBefore`、`remove`
-- 入站事件触发（从 Head 向 Tail 传播）：`fireChannelRegistered`、`fireChannelActive`、`fireChannelInactive`、`fireChannelRead`、`fireChannelReadComplete`、`fireUserEventTriggered`
-- 出站事件请求（从 Tail 向 Head 传播）：`bind`、`connect`、`write`、`flush`、`writeAndFlush`、`close`、`deregister`
-- 组件检索：`channel()`、`context()`、`filterContext()`、`first()`、`last()`
+主要职责：
 
----
+- 支持 `addFirst`、`addLast`、`addAfter`、`addBefore`、`remove`。
+- 入站事件从 Head 向 Tail 传播。
+- 出站事件从 Tail 向 Head 传播。
+- 支持通过类型或注解定位上下文。
 
 ### `DefaultChannelPipeline`
-**位置**: `io.github.specdock.mininetty.channel.DefaultChannelPipeline`
 
-`ChannelPipeline` 的默认实现类，使用双向链表存储 handler。
+pipeline 默认实现。
 
-**主要职责**:
-- 维护 HeadContext 和 TailContext 作为链表的头尾哨兵
-- 实现所有 `addFirst`、`addLast`、`addAfter`、`addBefore`、`remove` 方法
-- 实现所有事件触发和传播方法
-- 内部类 `HeadContext`：同时实现 `ChannelOutboundHandler` 和 `ChannelInboundHandler`，负责将出站写入操作写入 `ChannelOutboundBuffer`
-- 内部类 `TailContext`：同时实现 `ChannelOutboundHandler` 和 `ChannelInboundHandler`，作为链尾哨兵，消费所有传播到此处的事件
-- `TailContext.channelRead` 会对未被业务消费的 `ReferenceCounted` 消息执行兜底 `release()`，避免入站缓冲泄露
+主要职责：
 
----
+- 维护 HeadContext / TailContext 哨兵节点。
+- HeadContext 将最终出站写入转交 `ChannelOutboundBuffer`。
+- TailContext 对未被业务消费的 `ReferenceCounted` 入站消息兜底 `release()`。
 
 ### `ChannelInitializer`
-**位置**: `io.github.specdock.mininetty.channel.ChannelInitializer`
 
-通道初始化器抽象类，用于配置 channel 的 pipeline。
+通道初始化器抽象类。
 
-**主要职责**:
-- 实现模板方法模式：`channelRegistered` 作为模板方法调用 `preInit`、`initChannel`、`postInit`
-- `preInit`：框架级前置钩子（如插入空闲检测），默认空实现
-- `initChannel`：抽象方法，由子类实现业务 handler 装配逻辑
-- `postInit`：框架级后置钩子（如插入心跳拦截），默认空实现
-- 初始化完成后自动从 pipeline 中移除自身
-- 将其他方法透传给下一个 handler
+主要职责：
 
----
+- 模板方法：`preInit` -> `initChannel` -> `postInit`。
+- `initChannel` 由业务实现，用于装配 pipeline。
+- 初始化完成后从 pipeline 中移除自身。
 
-### `ServerChannelInitializer`
-**位置**: `io.github.specdock.mininetty.channel.ServerChannelInitializer`
+### `ServerChannelInitializer` / `ClientChannelInitializer`
 
-服务端通道初始化器，继承自 `ChannelInitializer`。
+框架提供的服务端/客户端初始化器。
 
-**主要职责**:
-- `preInit`：添加 `IdleStateHandler`（读空闲检测，64秒超时）
-- `postInit`：在 `FrameCodec` 注解的 handler 之后添加 `ServerHeartbeatHandler`
+主要职责：
 
----
-
-### `ClientChannelInitializer`
-**位置**: `io.github.specdock.mininetty.channel.ClientChannelInitializer`
-
-客户端通道初始化器，继承自 `ChannelInitializer`。
-
-**主要职责**:
-- `preInit`：添加 `IdleStateHandler`（读空闲检测，16秒间隔）
-- `postInit`：在 `FrameCodec` 注解的 handler 之后添加 `ClientHeartbeatHandler`
-
----
+- 注入 `IdleStateHandler`。
+- 在 `FrameCodec` 标记的编解码器附近注入心跳 handler。
 
 ### `SimpleChannelInboundHandler`
-**位置**: `io.github.specdock.mininetty.channel.SimpleChannelInboundHandler`
 
-简单通道入站处理器抽象类，提供方法透传的默认实现。
-
-**主要职责**:
-- 所有入站方法默认透传给下一个 handler
-- 供业务继承，只需重写关心的方法
-
----
+简单入站 handler 基类，默认透传事件，业务只需重写关心的方法。
 
 ### `ChannelOutboundBuffer`
-**位置**: `io.github.specdock.mininetty.channel.ChannelOutboundBuffer`
 
-出站缓冲区，用于缓存待发送的数据，并统一接管出站 `ReferenceCounted` 消息的释放责任。
+出站缓冲队列。
 
-**主要职责**:
-- 维护 `LinkedList<ByteBufSender>` 队列
-- `writeToBuffer`：将 `ByteBuf`、`CompositeByteBuf` 或兼容消息转换为 `ReferenceCounted` 后与 Promise 添加到队列
-- `flush`：将数据写入 Socket 发送缓冲区
-- 支持 `CompositeByteBuf.nioBuffers()` + `SocketChannel.write(ByteBuffer[])` 的 gathering write，避免合并拷贝
-- 支持 TCP 背压机制：当发送窗口满时注册 OP_WRITE 事件
-- 队列写完后注销 OP_WRITE，避免空写事件反复触发
-- 内部类 `ByteBufSender` 持有 `ReferenceCounted` 消息和 Promise，写完成功 `release()` 并 `setSuccess()`，失败或关闭时 `release()` 并 `setFailure()`
+主要职责：
 
----
+- 维护待写出的 `ReferenceCounted` 消息队列。
+- 入队后接管消息最终 `release()` 责任。
+- 支持 `ByteBufChain` 使用 `SocketChannel.write(ByteBuffer[])` gathering write。
+- 短期兼容 `ByteBuf` 单段写和 `CompositeByteBuf` gathering write。
+- 拒绝裸 `ByteBuffer` 出站，避免绕过 coder/encoder 和池化 chunk 模型。
+- 保留 `byte[]` 兼容路径，但转换为固定 chunk `ByteBufChain`。
+- 写完成功后释放消息并设置 promise success；失败或关闭时释放消息并设置 promise failure。
+- 当 Socket 发送窗口满时注册 OP_WRITE，队列清空后注销 OP_WRITE。
 
 ### `FrameCodec`
-**位置**: `io.github.specdock.mininetty.channel.FrameCodec`
 
-注解，用于标记编解码器 handler。
-
-**主要职责**:
-- `@Target(ElementType.TYPE)` - 应用于类级别
-- `@Retention(RetentionPolicy.RUNTIME)` - 运行时保留
-- 用于 `addAfter`、`addBefore` 等方法中定位编解码器位置
-
----
+编解码器标记注解，用于 initializer 或 pipeline 按位置注入 handler。
 
 ### `EventLoop`
-**位置**: `io.github.specdock.mininetty.channel.EventLoop`
 
-事件循环接口，继承自 `EventLoopGroup`。
+事件循环接口，继承 `EventLoopGroup`。
 
-**主要职责**:
-- 定义 `getScheduleTaskQueue()` 获取定时任务队列
-- 定义 `inEventLoop()` 判断当前线程是否在事件循环中
+主要职责：
 
----
+- 查询是否在 EventLoop 线程。
+- 暴露定时任务队列。
+- 暴露绑定的 `PooledByteBufAllocator allocator()`，供编解码器和 handler 使用同一池化分配器。
 
 ### `EventLoopGroup`
-**位置**: `io.github.specdock.mininetty.channel.EventLoopGroup`
 
-事件循环组接口，管理多个 EventLoop。
+事件循环组接口。
 
-**主要职责**:
-- 定义任务提交：`execute`、`shedule`、`scheduleAtFixedRate`
-- 定义 `next()` 获取下一个 EventLoop（用于负载均衡）
-- 定义 `register` 方法将 channel 注册到 Selector
+主要职责：
 
----
+- 提交普通任务和定时任务。
+- `next()` 获取下一个 EventLoop。
+- 注册 channel 到 Selector。
 
 ### `DefaultChannelPromise`
-**位置**: `io.github.specdock.mininetty.channel.DefaultChannelPromise`
 
-Promise 的默认实现，用于异步操作状态同步与回调触发。
+异步结果默认实现。
 
-**主要职责**:
-- 使用 volatile 保证多线程可见性
-- 业务线程调用 `addListener` 注册监听器，`sync()` 阻塞等待
-- EventLoop 线程调用 `setSuccess()` 或 `setFailure()` 标记完成
-- `setSuccess()` 时唤醒所有等待线程并触发所有监听器
-- 支持异常传播
+主要职责：
+
+- 记录 success/failure/done 状态。
+- 支持 listener 回调。
+- 支持 `sync()` 阻塞等待。
+- 关联 `Channel`。
 
 ---
 
 ## NIO Channel 实现
 
 ### `NioServerSocketChannel`
-**位置**: `io.github.specdock.mininetty.channel.socket.nio.NioServerSocketChannel`
 
-NIO 服务端通道实现，封装 `java.nio.channels.ServerSocketChannel`。
+NIO 服务端通道实现。
 
-**主要职责**:
-- 封装 NIO ServerSocketChannel，配置为非阻塞模式
-- 实现 `ServerSocketChannel` 接口的所有方法
-- 实现 `accept()` 方法接受客户端连接并返回 `NioSocketChannel`
-- 维护 `SelectionKey` 用于 Selector 操作
-- 实现 `close()` 方法：取消 SelectionKey 注册并关闭底层通道
+主要职责：
 
----
+- 封装 `java.nio.channels.ServerSocketChannel`。
+- 配置非阻塞模式。
+- 实现绑定、注册、accept 和关闭。
+- accept 后返回 `NioSocketChannel`。
 
 ### `NioSocketChannel`
-**位置**: `io.github.specdock.mininetty.channel.socket.nio.NioSocketChannel`
 
-NIO 客户端通道实现，封装 `java.nio.channels.SocketChannel`。
+NIO 连接通道实现。
 
-**主要职责**:
-- 封装 NIO SocketChannel，配置为非阻塞模式
-- 实现 `SocketChannel` 接口的所有方法
-- 实现 `connect()` 方法：非阻塞连接，支持 OP_CONNECT 事件
-- 实现 `finishConnect()` 方法：完成连接并触发 `fireChannelActive`
-- 维护 `ChannelOutboundBuffer` 用于出站数据缓冲
-- 实现 `write(ByteBuffer[])`，支持 `CompositeByteBuf` 多段 buffer 聚集写出
-- 实现 `close()` 方法：触发 `fireChannelInactive`、取消 SelectionKey、关闭底层通道
+主要职责：
 
----
+- 封装 `java.nio.channels.SocketChannel`。
+- 配置非阻塞模式。
+- 支持非阻塞 connect / finishConnect。
+- 维护 `ChannelOutboundBuffer`。
+- 实现 `write(ByteBuffer)` 和 `write(ByteBuffer[])`。
+- 关闭时触发 inactive、取消 SelectionKey 并关闭底层 channel。
 
 ### `NioEventLoop`
-**位置**: `io.github.specdock.mininetty.channel.nio.NioEventLoop`
 
-NIO 事件循环实现，单线程事件处理器。
+单线程 NIO 事件循环。
 
-**主要职责**:
-- 封装 `Selector`，启动专属线程处理事件和任务
-- 维护普通任务队列（`ArrayBlockingQueue`）和定时任务队列（`PriorityBlockingQueue`）
-- `execute()` 提交普通任务
-- `shedule()` / `scheduleAtFixedRate()` 提交定时任务
-- `register()` 将 channel 注册到 Selector，触发 pipeline 的 `fireChannelRegistered` 和 `fireChannelActive`
-- `processEventsAndTasks()` 协调处理任务和事件：优先处理已到期的定时任务和普通任务，否则阻塞等待事件或超时
-- `selectAndDisPatch()` 轮询 Selector 就绪事件并分发处理：
-  - OP_ACCEPT → `ServerSocketChannel.accept()` 并触发 `fireChannelRead`
-  - OP_READ → 读取数据到 `ByteBufChain` 并触发 `fireChannelRead`
-  - OP_WRITE → 调用 `ChannelOutboundBuffer.flush()`
-  - OP_CONNECT → 调用 `SocketChannel.finishConnect()`
-- 内部类 `NioEventLoopThread`：继承 Thread，不断调用 `processEventsAndTasks()`
+主要职责：
 
----
+- 持有 `Selector`。
+- 持有当前 EventLoop 绑定的 `PooledByteBufAllocator`。
+- 执行普通任务和定时任务。
+- 分发 OP_ACCEPT、OP_READ、OP_WRITE、OP_CONNECT。
+- OP_READ 时读取到 `ByteBufChain` 并触发 `fireChannelRead`。
+- OP_WRITE 时调用 `ChannelOutboundBuffer.flush()`。
 
 ### `NioEventLoopGroup`
-**位置**: `io.github.specdock.mininetty.channel.nio.NioEventLoopGroup`
 
-NIO 事件循环组，管理多个 `NioEventLoop`。
-
-**主要职责**:
-- 维护 `NioEventLoop[]` 数组
-- `next()` 方法使用 AtomicInteger 轮询获取下一个 EventLoop
-- 所有操作委托给 `next()` 返回的 EventLoop 执行
-
----
-
-## Socket 模块
-
-### `ServerSocketChannel`
-**位置**: `io.github.specdock.mininetty.channel.socket.ServerSocketChannel`
-
-服务端通道接口，继承 `ServerChannel`。
-
-**主要职责**:
-- 定义 `accept()` 方法接受客户端连接
-
----
-
-### `SocketChannel`
-**位置**: `io.github.specdock.mininetty.channel.socket.SocketChannel`
-
-客户端通道接口，继承 `Channel`。
-
-**主要职责**:
-- 定义获取远程/本地地址、写入数据、完成连接的方法
+NIO 事件循环组，维护多个 `NioEventLoop` 并通过轮询分配 channel。
 
 ---
 
 ## Handler 模块
 
 ### `LengthFieldBasedFrameDecoder`
-**位置**: `io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameDecoder`
 
-基于长度字段的帧解码器，继承 `ChannelInboundHandler`，带 `@FrameCodec` 注解，输出零拷贝 frame。
+基于长度字段的帧解码器，带 `@FrameCodec` 标记。
 
-**主要职责**:
-- 解析粘包/拆包问题，使用长度字段（默认4字节）标识帧长度
-- 从 `ByteBufChain` 链中读取数据
-- 先读取长度字段解析帧长度，长度字段作为协议元数据允许少量字节复制
-- 完整帧数据通过 `ByteBufChain.readRetainedFrame()` 切出 `ByteBuf` / `CompositeByteBuf`，不复制 payload
-- 支持跨多个 `ByteBufChain` 聚合完整 frame
-- 将 `ReferenceCounted` frame 传递给下一个 handler，由后续 handler 按消费/透传规则释放
-- 支持长度字段为0的空帧处理
+主要职责：
 
----
+- 解析粘包/拆包。
+- 从一个或多个 `ByteBufChain` 中读取长度字段。
+- 完整 payload 通过 `ByteBufChain.readRetainedFrame()` 切出，不复制 payload。
+- 输出 `ByteBufChain` frame 给下一个 handler。
+- 释放已完全消费的入站链。
 
 ### `LengthFieldBasedFrameEncoder`
-**位置**: `io.github.specdock.mininetty.channel.handler.codec.LengthFieldBasedFrameEncoder`
 
-基于长度字段的帧编码器，实现 `ChannelOutboundHandler`，带 `@FrameCodec` 注解。
+基于长度字段的帧编码器，带 `@FrameCodec` 标记。
 
-**主要职责**:
-- 在发送数据前添加4字节长度的帧头
-- 支持 1 到 4 字节长度字段，并按大端序写入 direct `ByteBuf` header
-- 使用 `CompositeByteBuf` 组合长度头和 payload，不再创建 [长度 + 数据] 的新字节数组
-- 支持 `ReferenceCounted` 作为主出站消息类型，并保留 `byte[]` 兼容路径
-- 异常路径会释放已创建但未成功传递给下游的 buffer，避免泄露
-- 其他方法透传给下一个 handler
+主要职责：
 
----
+- 使用 `ctx.executor().allocator()` 创建 `ByteBufChain`。
+- 将长度字段直接写入 chain。
+- 将 payload 追加/转移到 frame chain。
+- 主路径输出 `ByteBufChain`，不再创建独立 header `ByteBuf` 或 `CompositeByteBuf`。
+- 异常路径释放未成功传递的 `ReferenceCounted`。
 
 ### `StringDecoder`
-**位置**: `io.github.specdock.mininetty.channel.handler.codec.StringDecoder`
 
-字符串解码器，实现 `ChannelInboundHandler`，作为明确的入站类型转换边界。
+字符串解码器。
 
-**主要职责**:
-- 将 `ByteBuf` / `CompositeByteBuf` 当前可读内容复制为 UTF-8 字符串
-- 转换完成后释放原始 `ReferenceCounted` 消息
-- 保留 `SimpleByteArray` 到 String 的兼容逻辑
-- 调用 `fireChannelRead(String)` 传递给下一个 handler
+主要职责：
 
----
+- 支持直接消费 `ByteBufChain`、`ByteBuf`、`CompositeByteBuf`。
+- 将当前可读内容转换为 UTF-8 `String`。
+- 转换完成后释放原始 `ReferenceCounted`。
+- 不再支持 `SimpleByteArray`。
 
 ### `StringEncoder`
-**位置**: `io.github.specdock.mininetty.channel.handler.codec.StringEncoder`
 
-字符串编码器，实现 `ChannelOutboundHandler`，作为明确的出站类型转换边界。
+字符串编码器。
 
-**主要职责**:
-- 将字符串转换为 UTF-8 字节数组
-- 将 UTF-8 字节写入 direct `ByteBuf`
-- 调用 `ctx.write(ByteBuf)` 继续进入零拷贝出站链路
+主要职责：
 
----
+- 使用 `CharsetEncoder` 将 `String` 直接编码到 `ByteBufChain.writableNioBuffer()`。
+- 通过 `advanceWriterIndex(int)` 推进写索引。
+- 使用当前 `EventLoop` 的 allocator 分配固定大小 chunk。
+- 不调用 `String.getBytes()`，不创建中间 `byte[]`，不创建非默认容量 direct `ByteBuf`。
 
 ### `IdleStateHandler`
-**位置**: `io.github.specdock.mininetty.channel.handler.timeout.IdleStateHandler`
 
-空闲状态处理器，实现 `ChannelHandler`。
+空闲检测 handler。
 
-**主要职责**:
-- 检测 channel 读空闲状态
-- 当空闲时间超过阈值时触发 `userEventTriggered(READER_IDLE_STATE_EVENT)`
-- 使用 `HashedWheelTimer` 调度空闲检测任务
-- `channelRead` 时更新最后读时间
-- `channelInactive` 时取消定时任务
+主要职责：
 
----
+- 记录最后读时间。
+- 使用 `HashedWheelTimer` 定时检测读空闲。
+- 超时后触发 `READER_IDLE_STATE_EVENT`。
+- channel inactive 时取消定时任务。
 
 ### `ClientHeartbeatHandler`
-**位置**: `io.github.specdock.mininetty.channel.handler.timeout.ClientHeartbeatHandler`
 
-客户端心跳策略处理器，同时实现 `ChannelInboundHandler` 和 `ChannelOutboundHandler`。
+客户端心跳 handler。
 
-**主要职责**:
-- 协议头：0x00 = 业务数据帧，0x01 = Ping，0x02 = Pong
-- `userEventTriggered`：收到读空闲事件时发送 direct `ByteBuf` Ping 帧
-- `channelRead`：消费 Pong 回执并释放消息；解析业务数据帧，通过 `readByte()` 推进读指针剥离协议头后透传
-- `write`（出站拦截）：使用 `CompositeByteBuf` 组合 0x00 协议头和业务 payload，不复制 payload
-- 支持历史 `SimpleByteArray` 入站兼容路径
+主要职责：
 
----
+- 协议头：`0x00` 业务数据、`0x01` Ping、`0x02` Pong。
+- 读空闲时发送 Ping，Ping 使用 `ByteBufChain`。
+- 收到 Pong 后释放消息。
+- 收到业务帧时剥离头字节后透传。
+- 出站业务消息前写入业务头，输出 `ByteBufChain`。
+- 支持直接处理 `ByteBufChain`。
 
 ### `ServerHeartbeatHandler`
-**位置**: `io.github.specdock.mininetty.channel.handler.timeout.ServerHeartbeatHandler`
 
-服务端心跳策略处理器，同时实现 `ChannelInboundHandler` 和 `ChannelOutboundHandler`。
+服务端心跳 handler。
 
-**主要职责**:
-- 协议头：0x00 = 业务数据帧，0x01 = Ping，0x02 = Pong
-- `channelRead`：收到 Ping 时回复 direct `ByteBuf` Pong 并释放原消息；解析业务数据帧，通过 `readByte()` 推进读指针剥离协议头后透传
-- `userEventTriggered`：收到读空闲事件时关闭超时连接
-- `write`（出站拦截）：使用 `CompositeByteBuf` 组合 0x00 协议头和业务 payload，不复制 payload
-- 支持历史 `SimpleByteArray` 入站兼容路径
+主要职责：
+
+- 收到 Ping 时回复 Pong，Pong 使用 `ByteBufChain`。
+- 收到业务帧时剥离头字节后透传。
+- 读空闲事件触发超时关闭。
+- 出站业务消息前写入业务头，输出 `ByteBufChain`。
+- 支持直接处理 `ByteBufChain`。
 
 ---
 
 ## Timer 模块
 
 ### `HashedWheelTimer`
-**位置**: `io.github.specdock.mininetty.timer.HashedWheelTimer`
 
-时间轮定时器（全局静态单例版，毫秒精度）。
+时间轮定时器。
 
-**主要职责**:
-- 使用环形数组（Bucket）实现时间轮
-- 每个 Bucket 是双向链表头，存储 `TimeoutTask`
-- `newTimeout(task, lastTimeMs, delayMs)` 创建定时任务
-- 后台 Worker 线程每 tickMs（默认1000ms）转动一次指针
-- `TimeoutTask` 记录剩余圈数和截止时间
-- `TimeoutTask.cancel()` 取消任务并置空 Runnable 以释放引用
-- 守护线程模式，不影响 JVM 退出
+主要职责：
+
+- 使用环形 bucket 管理定时任务。
+- 后台 worker 周期推进 tick。
+- 支持 `newTimeout(...)` 创建延迟任务。
+- 支持取消任务。
 
 ---
 
 ## Util 模块
 
 ### `HeartbeatConstant`
-**位置**: `io.github.specdock.mininetty.util.HeartbeatConstant`
 
 心跳常量定义。
 
-**主要职责**:
-- `HEARTBEAT_INTERVAL_MS = 16000`：客户端心跳间隔（16秒）
-- `HEARTBEAT_TIMEOUT_MS = 64000`：服务端读空闲超时（64秒）
-
----
-
 ### `InterestOpsUtil`
-**位置**: `io.github.specdock.mininetty.util.InterestOpsUtil`
 
-SelectionKey 操作位工具类。
-
-**主要职责**:
-- `interestOpsToString(int interestOps)` 将 SelectionKey 操作位转换为可读字符串
-- 支持 OP_ACCEPT、OP_READ、OP_WRITE、OP_CONNECT
+SelectionKey 操作位格式化工具。
 
 ---
 
 ## Util Concurrent 模块
 
 ### `Future`
-**位置**: `io.github.specdock.mininetty.util.concurrent.Future`
 
-异步操作结果接口。
-
-**主要职责**:
-- 状态查询：`isSuccess()`、`isDone()`、`cause()`
-- 回调注册：`addListener(GenericFutureListener)`
-- 阻塞等待：`sync()`
-- 获取关联的 `Channel`
-
----
+异步操作只读结果接口。
 
 ### `Promise`
-**位置**: `io.github.specdock.mininetty.util.concurrent.Promise`
 
-可写的异步承诺接口，继承 `Future`。
-
-**主要职责**:
-- `setSuccess()` 标记操作成功
-- `setFailure(Throwable cause)` 标记操作失败
-- `setChannel(Channel channel)` 设置关联的 Channel
-
----
+可写异步承诺接口，继承 `Future`。
 
 ### `GenericFutureListener`
-**位置**: `io.github.specdock.mininetty.util.concurrent.GenericFutureListener`
 
-异步操作监听器接口。
-
-**主要职责**:
-- `operationComplete(Future future)` 当异步操作完成时调用
-
----
+异步完成监听器。
 
 ### `ScheduleTask`
-**位置**: `io.github.specdock.mininetty.util.concurrent.ScheduleTask`
 
-定时任务实现类，实现 `Runnable` 和 `Comparable`。
-
-**主要职责**:
-- 维护 `Runnable`、`deadLine`、`period`、`EventLoop`
-- 实现 `compareTo()` 按截止时间排序
-- `run()` 执行任务后，如果 period > 0 则更新截止时间并重新入队
-- 支持周期性任务调度
+定时任务实体，实现 `Runnable` 和 `Comparable`。
 
 ---
 
-## 测试类（位于 src/test）
+## 测试覆盖
 
-以下测试类位于 `src/test/java/io/github/specdock/mininetty/` 目录：
+当前测试覆盖重点：
 
-| 类名 | 描述 |
-|------|------|
-| `BootstrapTest` | Bootstrap 客户端连接测试 |
-| `ServerBootstrapTest` | ServerBootstrap 服务端绑定测试 |
-| `DirectBufferTest` | 直接内存缓冲区测试 |
-| `PooledByteBufAllocatorTest` | 池化分配器测试 |
-| `PooledByteBufAllocatorRecycleTest` | 池化 ByteBuf release 归零回池、非默认容量释放决策和旧句柄不可访问测试 |
-| `TextTest` | 文本处理测试 |
+- `ByteBufChain` 默认 4KB chunk、跨 chunk 读写、skip、gathering view、retained frame。
+- `PooledByteBufAllocator` 引用归零回池、非默认容量释放、旧生命周期句柄不可访问。
+- `ChannelOutboundBuffer` 拒绝裸 `ByteBuffer` 出站。
+- `StringEncoder` 直接编码到 `ByteBufChain`。
+- `StringDecoder` 直接消费 `ByteBufChain`。
+- 客户端/服务端心跳 handler 直接处理 `ByteBufChain`。
 
 ---
 
 ## 模块关系总结
 
-```
+```text
 bootstrap/
-├── Bootstrap          - 客户端启动类
-└── ServerBootstrap    - 服务端启动类（含 ServerBootstrapAcceptor 内部类）
+  Bootstrap
+  ServerBootstrap
 
 buffer/
-├── ByteBuf            - ByteBuffer 封装
-├── ReferenceCounted   - 引用计数契约
-├── CompositeByteBuf   - 多段 ByteBuf 零拷贝组合视图
-├── ByteBufChain       - ByteBuf 链表管理器
-├── PooledByteBufAllocator - 内存池分配器
-└── SimpleByteArray    - 字节数组包装
+  ReferenceCounted
+  ByteBuf
+  ByteBufChain
+  CompositeByteBuf
+  PooledByteBufAllocator
 
 channel/
-├── Channel            - 通道核心接口
-├── ServerChannel      - 服务端通道接口
-├── ChannelHandler     - 处理器接口
-├── ChannelInboundHandler / ChannelOutboundHandler - 入站/出站接口
-├── ChannelHandlerContext - 上下文接口
-├── AbstractChannelHandlerContext - 上下文抽象类
-├── DefaultChannelHandlerContext - 上下文默认实现
-├── ChannelPipeline    - 管道接口
-├── DefaultChannelPipeline - 管道实现（含 HeadContext/TailContext）
-├── ChannelInitializer - 初始化器抽象类
-├── ServerChannelInitializer / ClientChannelInitializer - 初始化器实现
-├── SimpleChannelInboundHandler - 简单处理器基类
-├── ChannelOutboundBuffer - 出站缓冲
-├── FrameCodec         - 注解
-├── EventLoop / EventLoopGroup - 事件循环接口
-├── DefaultChannelPromise - Promise 实现
-└── socket/
-    ├── ServerSocketChannel / SocketChannel - socket 通道接口
-    └── nio/
-        ├── NioServerSocketChannel - NIO 服务端实现
-        ├── NioSocketChannel      - NIO 客户端实现
-        ├── NioEventLoop          - NIO 事件循环
-        └── NioEventLoopGroup     - NIO 事件循环组
+  Channel
+  ServerChannel
+  ChannelHandler
+  ChannelInboundHandler / ChannelOutboundHandler
+  ChannelHandlerContext
+  AbstractChannelHandlerContext
+  DefaultChannelHandlerContext
+  ChannelPipeline
+  DefaultChannelPipeline
+  ChannelInitializer
+  ServerChannelInitializer / ClientChannelInitializer
+  SimpleChannelInboundHandler
+  ChannelOutboundBuffer
+  FrameCodec
+  EventLoop / EventLoopGroup
+  DefaultChannelPromise
+  socket/
+    ServerSocketChannel / SocketChannel
+    nio/
+      NioServerSocketChannel
+      NioSocketChannel
+      NioEventLoop
+      NioEventLoopGroup
 
 handler/
-└── codec/
-    ├── LengthFieldBasedFrameDecoder - 长度字段解码器
-    ├── LengthFieldBasedFrameEncoder - 长度字段编码器
-    ├── StringDecoder / StringEncoder - 字符串编解码器
-└── timeout/
-    ├── IdleStateHandler - 空闲检测
-    ├── ClientHeartbeatHandler - 客户端心跳
-    └── ServerHeartbeatHandler - 服务端心跳
+  codec/
+    LengthFieldBasedFrameDecoder
+    LengthFieldBasedFrameEncoder
+    StringDecoder
+    StringEncoder
+  timeout/
+    IdleStateHandler
+    ClientHeartbeatHandler
+    ServerHeartbeatHandler
 
 timer/
-└── HashedWheelTimer - 时间轮定时器
+  HashedWheelTimer
 
 util/
-├── HeartbeatConstant - 心跳常量
-├── InterestOpsUtil - 操作位工具
-└── concurrent/
-    ├── Future / Promise - 异步接口
-    ├── GenericFutureListener - 监听器接口
-    └── ScheduleTask - 定时任务
+  HeartbeatConstant
+  InterestOpsUtil
+  concurrent/
+    Future / Promise
+    GenericFutureListener
+    ScheduleTask
 ```

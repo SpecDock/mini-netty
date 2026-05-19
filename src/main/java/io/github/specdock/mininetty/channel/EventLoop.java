@@ -1,5 +1,6 @@
 package io.github.specdock.mininetty.channel;
 
+import io.github.specdock.mininetty.buffer.PooledByteBufAllocator;
 import io.github.specdock.mininetty.util.concurrent.ScheduleTask;
 
 import java.util.Queue;
@@ -13,4 +14,6 @@ public interface EventLoop extends EventLoopGroup{
     Queue<ScheduleTask> getScheduleTaskQueue();
 
     boolean inEventLoop();
+
+    PooledByteBufAllocator allocator();
 }

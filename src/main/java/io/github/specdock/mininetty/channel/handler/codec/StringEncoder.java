@@ -1,14 +1,17 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
-import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.channel.ChannelHandlerContext;
 import io.github.specdock.mininetty.channel.ChannelOutboundHandler;
 import io.github.specdock.mininetty.channel.DefaultChannelPromise;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CoderResult;
+import java.nio.charset.StandardCharsets;
+import java.nio.charset.CharsetEncoder;
 
 /**
  * @author specdock
@@ -40,11 +43,37 @@ public class StringEncoder implements ChannelOutboundHandler {
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
         System.out.println("StringEncoder");
         String s = (String) msg;
-        // 字符串编码是允许的类型转换边界；转换后继续以 direct ByteBuf 进入零拷贝出站链路。
-        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
-        ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
-        buf.writeBytes(bytes);
-        ctx.write(buf, promise);
+        ByteBufChain chain = new ByteBufChain(true, ctx.executor().allocator());
+        CharsetEncoder encoder = StandardCharsets.UTF_8.newEncoder();
+        CharBuffer src = CharBuffer.wrap(s);
+        boolean success = false;
+        try {
+            while (true) {
+                ByteBuffer dst = chain.writableNioBuffer();
+                int before = dst.position();
+                CoderResult result = encoder.encode(src, dst, true);
+                chain.advanceWriterIndex(dst.position() - before);
+                if (result.isOverflow()) continue;
+                if (result.isError()) result.throwException();
+                break;
+            }
+            while (true) {
+                ByteBuffer dst = chain.writableNioBuffer();
+                int before = dst.position();
+                CoderResult result = encoder.flush(dst);
+                chain.advanceWriterIndex(dst.position() - before);
+                if (result.isOverflow()) continue;
+                if (result.isError()) result.throwException();
+                break;
+            }
+            ctx.write(chain, promise);
+            success = true;
+        } catch (Exception e) {
+            promise.setFailure(e);
+            throw new RuntimeException("Failed to encode string", e);
+        } finally {
+            if (!success) chain.release();
+        }
         return promise;
     }
 

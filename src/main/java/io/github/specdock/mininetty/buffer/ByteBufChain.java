@@ -2,231 +2,301 @@ package io.github.specdock.mininetty.buffer;
 
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
 
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * @author specdock
- * @Date 2026/2/25
- * @Time 21:15
+ * Fixed-size pooled ByteBuf chunk chain.
  */
 public class ByteBufChain implements ReferenceCounted {
 
-    private LinkedList<ByteBuf> bufferChain;
-    private boolean isDirect;
+    private final LinkedList<ByteBuf> bufferChain = new LinkedList<>();
+    private final boolean isDirect;
     private final PooledByteBufAllocator allocator;
-    private final int chunkSize;
+    private final AtomicInteger refCnt = new AtomicInteger(1);
+    private int readableBytes;
 
-
-
-    public ByteBufChain(boolean isDirect, PooledByteBufAllocator allocator){
-        bufferChain = new LinkedList<>();
+    public ByteBufChain(boolean isDirect, PooledByteBufAllocator allocator) {
+        if (allocator == null) {
+            throw new NullPointerException("allocator");
+        }
         this.isDirect = isDirect;
         this.allocator = allocator;
-        this.chunkSize = allocator.bufferSize();
     }
 
-
-    public ByteBufChain(boolean isDirect){
+    public ByteBufChain(boolean isDirect) {
         this(isDirect, new PooledByteBufAllocator());
     }
 
+    public PooledByteBufAllocator allocator() {
+        return allocator;
+    }
 
-
-    
-
-    public void read(byte[] target, int offset, int length){
-        while(length > 0){
-            ByteBuf buf = bufferChain.getFirst();
-            if(buf.readableBytes() <= 0){
-                buf.release();
-                bufferChain.remove(0);
-                continue;
-            }
+    public void read(byte[] target, int offset, int length) {
+        ensureAccessible();
+        checkReadable(length);
+        while (length > 0) {
+            ByteBuf buf = firstReadableBuf();
             int readLength = Math.min(length, buf.readableBytes());
             buf.read(target, offset, readLength);
+            readableBytes -= readLength;
             offset += readLength;
             length -= readLength;
-        }
-    }
-
-    public int readableBytes(){
-        return length();
-    }
-
-    public byte readByte(){
-        while(true){
-            ByteBuf buf = bufferChain.getFirst();
-            if(buf.readableBytes() <= 0){
-                buf.release();
-                bufferChain.removeFirst();
-                continue;
-            }
-            byte value = buf.readByte();
             discardReadBuffers();
-            return value;
         }
     }
 
-    public void skipBytes(int length){
-        while(length > 0){
-            ByteBuf buf = bufferChain.getFirst();
-            if(buf.readableBytes() <= 0){
-                buf.release();
-                bufferChain.removeFirst();
-                continue;
-            }
+    public int readableBytes() {
+        ensureAccessible();
+        return readableBytes;
+    }
+
+    public int length() {
+        return readableBytes();
+    }
+
+    public byte readByte() {
+        ensureAccessible();
+        checkReadable(1);
+        ByteBuf buf = firstReadableBuf();
+        byte value = buf.readByte();
+        readableBytes--;
+        discardReadBuffers();
+        return value;
+    }
+
+    public void skipBytes(int length) {
+        ensureAccessible();
+        checkReadable(length);
+        while (length > 0) {
+            ByteBuf buf = firstReadableBuf();
             int skip = Math.min(length, buf.readableBytes());
             buf.skipBytes(skip);
+            readableBytes -= skip;
             length -= skip;
             discardReadBuffers();
         }
     }
 
-    /**
-     * 从链上读取一个完整 frame 的零拷贝视图。
-     *
-     * <p>如果 frame 横跨多个 ByteBuf，会返回 CompositeByteBuf；每段通过 retainedSlice
-     * 保留底层内存引用，原链消费完的 chunk 可以安全 release。</p>
-     */
-    public ReferenceCounted readRetainedFrame(int length){
-        if(length < 0 || length > readableBytes()){
-            throw new IndexOutOfBoundsException("Not enough readable bytes for frame");
-        }
-        CompositeByteBuf composite = new CompositeByteBuf();
-        while(length > 0){
-            ByteBuf buf = bufferChain.getFirst();
-            if(buf.readableBytes() <= 0){
-                buf.release();
-                bufferChain.removeFirst();
-                continue;
+    public ByteBufChain readRetainedFrame(int length) {
+        ensureAccessible();
+        checkReadable(length);
+        ByteBufChain frame = new ByteBufChain(isDirect, allocator);
+        boolean success = false;
+        try {
+            while (length > 0) {
+                ByteBuf buf = firstReadableBuf();
+                int sliceLength = Math.min(length, buf.readableBytes());
+                frame.append(buf.retainedSlice(sliceLength));
+                buf.skipBytes(sliceLength);
+                readableBytes -= sliceLength;
+                length -= sliceLength;
+                discardReadBuffers();
             }
-            int sliceLength = Math.min(length, buf.readableBytes());
-            // retainedSlice 保证 frame 交给下游后，底层 chunk 不会被链表回收提前释放。
-            composite.addComponent(buf.retainedSlice(sliceLength));
-            buf.skipBytes(sliceLength);
-            length -= sliceLength;
-            discardReadBuffers();
-        }
-        return composite;
-    }
-
-    private void discardReadBuffers(){
-        while(!bufferChain.isEmpty() && bufferChain.getFirst().readableBytes() <= 0){
-            bufferChain.removeFirst().release();
+            success = true;
+            return frame;
+        } finally {
+            if (!success) {
+                frame.release();
+            }
         }
     }
 
-
-    private void creatLast(){
-        ByteBuf buf = allocator.allocate(isDirect);
-        bufferChain.addLast(buf);
+    public ByteBuffer[] nioBuffers(int maxCount) {
+        ensureAccessible();
+        if (maxCount <= 0) {
+            throw new IllegalArgumentException("maxCount must be positive");
+        }
+        List<ByteBuffer> buffers = new ArrayList<>(Math.min(maxCount, bufferChain.size()));
+        for (ByteBuf buf : bufferChain) {
+            if (buf.readableBytes() > 0) {
+                buffers.add(buf.nioBuffer());
+                if (buffers.size() == maxCount) {
+                    break;
+                }
+            }
+        }
+        return buffers.toArray(new ByteBuffer[0]);
     }
 
-    private ByteBuf getLastWritableBuf(){
-        if(bufferChain.isEmpty()){
-            creatLast();
-        }
-        ByteBuf buf = bufferChain.getLast();
-
-        if(buf.writableBytes() == 0){
-            creatLast();
-        }
-
-        return bufferChain.getLast();
+    public ByteBuffer writableNioBuffer() {
+        ensureAccessible();
+        return getLastWritableBuf().writableNioBuffer();
     }
 
-    public int write(SocketChannel socketChannel){
-        int sum = 0;
-        for(int i = 0; i < 16; i++){
+    public void advanceWriterIndex(int bytes) {
+        ensureAccessible();
+        ByteBuf last = bufferChain.isEmpty() ? null : bufferChain.getLast();
+        if (last == null || bytes < 0 || bytes > last.writableBytes()) {
+            throw new IndexOutOfBoundsException("advanceWriterIndex out of range");
+        }
+        last.advanceWriterIndex(bytes);
+        readableBytes += bytes;
+    }
+
+    public void writeByte(int value) {
+        ensureAccessible();
+        ByteBuf buf = getLastWritableBuf();
+        buf.writeByte(value);
+        readableBytes++;
+    }
+
+    public void writeInt(int value) {
+        writeByte((value >>> 24) & 0xFF);
+        writeByte((value >>> 16) & 0xFF);
+        writeByte((value >>> 8) & 0xFF);
+        writeByte(value & 0xFF);
+    }
+
+    public void writeBytes(byte[] src, int offset, int length) {
+        ensureAccessible();
+        if (length < 0 || offset < 0 || offset + length > src.length) {
+            throw new IndexOutOfBoundsException("writeBytes out of range");
+        }
+        while (length > 0) {
             ByteBuf buf = getLastWritableBuf();
-            int write = buf.writeFromChannel(socketChannel);
-            if(write == -1){
+            int write = Math.min(length, buf.writableBytes());
+            buf.writeBytes(src, offset, write);
+            readableBytes += write;
+            offset += write;
+            length -= write;
+        }
+    }
+
+    public ByteBufChain append(ByteBuf buf) {
+        ensureAccessible();
+        if (buf == null) {
+            throw new NullPointerException("buf");
+        }
+        bufferChain.addLast(buf);
+        readableBytes += buf.readableBytes();
+        return this;
+    }
+
+    public ByteBufChain appendChain(ByteBufChain chain) {
+        ensureAccessible();
+        if (chain == null) {
+            throw new NullPointerException("chain");
+        }
+        chain.ensureAccessible();
+        while (!chain.bufferChain.isEmpty()) {
+            bufferChain.addLast(chain.bufferChain.removeFirst());
+        }
+        readableBytes += chain.readableBytes;
+        chain.readableBytes = 0;
+        chain.refCnt.set(0);
+        return this;
+    }
+
+    public int write(SocketChannel socketChannel) {
+        ensureAccessible();
+        int sum = 0;
+        for (int i = 0; i < 16; i++) {
+            ByteBuf buf = getLastWritableBuf();
+            int read = buf.writeFromChannel(socketChannel);
+            if (read == -1) {
                 return -1;
             }
-            sum += write;
-            if(write == 0){
-               break;
+            sum += read;
+            readableBytes += read;
+            if (read == 0) {
+                break;
             }
         }
         return sum;
     }
 
-    public byte[] getByteArray(){
-        int length = chunkSize * (bufferChain.size() - 1) + bufferChain.getLast().readableBytes();
-        System.out.println(bufferChain.getLast().readableBytes());
-        byte[] byteArray = new byte[length];
-        int offset = 0;
-        for(ByteBuf byteBuf : bufferChain){
-            byteBuf.read(byteArray, offset, Math.min(chunkSize, length - offset));
-            offset += chunkSize;
-        }
+    public byte[] getByteArray() {
+        ensureAccessible();
+        byte[] byteArray = new byte[readableBytes];
+        read(byteArray, 0, byteArray.length);
         return byteArray;
     }
 
-    public int length(){
-        int sum = 0;
-        for(ByteBuf buf : bufferChain){
-            sum += buf.readableBytes();
-        }
-        return sum;
-    }
-
-    /**
-     * 释放所有的ByteBuf到池中
-     */
     public void recycle() {
         release();
     }
 
     @Override
     public int refCnt() {
-        return bufferChain.isEmpty() ? 0 : 1;
+        return refCnt.get();
     }
 
     @Override
-    public ReferenceCounted retain() {
-        for(ByteBuf buf : bufferChain){
-            buf.retain();
-        }
+    public ByteBufChain retain() {
+        int count;
+        do {
+            count = refCnt.get();
+            if (count <= 0) {
+                throw new IllegalStateException("Illegal retain: ByteBufChain has already been released.");
+            }
+        } while (!refCnt.compareAndSet(count, count + 1));
         return this;
     }
 
     @Override
     public boolean release() {
+        int count;
+        do {
+            count = refCnt.get();
+            if (count <= 0) {
+                throw new IllegalStateException("Illegal release: ByteBufChain has already been released.");
+            }
+        } while (!refCnt.compareAndSet(count, count - 1));
+        if (count != 1) {
+            return false;
+        }
         RuntimeException failure = null;
-        for(ByteBuf buf : bufferChain){
+        for (ByteBuf buf : bufferChain) {
             try {
                 buf.release();
             } catch (RuntimeException e) {
-                if(failure == null) {
-                    failure = e;
-                }
+                if (failure == null) failure = e;
             }
         }
         bufferChain.clear();
-        if(failure != null) {
-            throw failure;
-        }
+        readableBytes = 0;
+        if (failure != null) throw failure;
         return true;
     }
 
+    private void discardReadBuffers() {
+        while (!bufferChain.isEmpty() && bufferChain.getFirst().readableBytes() <= 0) {
+            bufferChain.removeFirst().release();
+        }
+    }
 
-//    public boolean isEnd(){
-//        byte[] code = "\n\n\r\r\n\r".getBytes(StandardCharsets.UTF_8);
-//        List<byte[]> byteList = new ArrayList<>();
-//        int codeLength = code.length - 1;
-//        int index = bufferChain.size() - 1;
-//        while(codeLength >= 0){
-//            ByteBuf byteBuf = bufferChain.get(index);
-//            byte[] bytes = new byte[byteBuf.readableBytes()];
-//            byteBuf.read(bytes);
-//            for(int i = bytes.length - 1; i >= 0 && codeLength >= 0; i--, codeLength--){
-//                if(bytes[i] != code[codeLength]){
-//                    return false;
-//                }
-//            }
-//        }
-//
-//        return true;
-//    }
+    private ByteBuf firstReadableBuf() {
+        discardReadBuffers();
+        if (bufferChain.isEmpty()) {
+            throw new IndexOutOfBoundsException("No readable bytes");
+        }
+        return bufferChain.getFirst();
+    }
+
+    private void createLast() {
+        bufferChain.addLast(allocator.allocate(isDirect));
+    }
+
+    private ByteBuf getLastWritableBuf() {
+        if (bufferChain.isEmpty() || bufferChain.getLast().writableBytes() == 0) {
+            createLast();
+        }
+        return bufferChain.getLast();
+    }
+
+    private void checkReadable(int length) {
+        if (length < 0 || length > readableBytes) {
+            throw new IndexOutOfBoundsException("Not enough readable bytes");
+        }
+    }
+
+    private void ensureAccessible() {
+        if (refCnt.get() <= 0) {
+            throw new IllegalStateException("Illegal access: ByteBufChain has already been released.");
+        }
+    }
 }

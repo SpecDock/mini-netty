@@ -204,6 +204,22 @@ public class ByteBuf implements ReferenceCounted {
         return duplicate.slice();
     }
 
+    public ByteBuffer writableNioBuffer() {
+        ensureAccessible();
+        ByteBuffer duplicate = byteBuffer.duplicate();
+        duplicate.position(writeIndex);
+        duplicate.limit(byteBuffer.capacity());
+        return duplicate.slice();
+    }
+
+    public void advanceWriterIndex(int bytes) {
+        ensureAccessible();
+        if (bytes < 0 || bytes > writableBytes()) {
+            throw new IndexOutOfBoundsException("advanceWriterIndex out of range");
+        }
+        writeIndex += bytes;
+    }
+
     public ByteBuf retainedSlice(int length) {
         ensureAccessible();
         if (length < 0 || length > readableBytes()) {

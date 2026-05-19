@@ -1,13 +1,12 @@
 package io.github.specdock.mininetty.channel.handler.codec;
 
 import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.buffer.CompositeByteBuf;
 import io.github.specdock.mininetty.buffer.ReferenceCounted;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
-
-import java.nio.ByteBuffer;
 
 @FrameCodec
 public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
@@ -40,17 +39,14 @@ public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
         System.out.println("LengthFieldBasedFrameEncoder");
-        ReferenceCounted payload = toReferenceCounted(msg);
-        ByteBuf header = null;
-        CompositeByteBuf frame = null;
+        ReferenceCounted payload = toReferenceCounted(ctx, msg);
+        ByteBufChain frame = null;
         boolean transferred = false;
         try {
             int length = readableBytes(payload);
-            header = new ByteBuf(ByteBuffer.allocateDirect(lengthFieldLength));
-            writeLength(header, length);
-            // length header 与 payload 组合成逻辑连续帧，不复制 payload 字节。
-            frame = new CompositeByteBuf().addComponent(header).addComponent(payload);
-            header = null;
+            frame = new ByteBufChain(true, ctx.executor().allocator());
+            writeLength(frame, length);
+            appendPayload(frame, payload);
             payload = null;
             ctx.write(frame, promise);
             transferred = true;
@@ -58,20 +54,15 @@ public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
             if (!transferred) {
                 if (frame != null) {
                     frame.release();
-                } else {
-                    if (header != null) {
-                        header.release();
-                    }
-                    if (payload != null) {
-                        payload.release();
-                    }
+                } else if (payload != null) {
+                    payload.release();
                 }
             }
         }
         return promise;
     }
 
-    private void writeLength(ByteBuf header, int length) {
+    private void writeLength(ByteBufChain header, int length) {
         int max = lengthFieldLength == 4 ? Integer.MAX_VALUE : (1 << (lengthFieldLength * 8)) - 1;
         if (length < 0 || length > max) {
             throw new IllegalArgumentException("Frame length exceeds " + lengthFieldLength + " byte length field: " + length);
@@ -81,22 +72,37 @@ public class LengthFieldBasedFrameEncoder implements ChannelOutboundHandler {
         }
     }
 
-    private ReferenceCounted toReferenceCounted(Object msg){
+    private ReferenceCounted toReferenceCounted(ChannelHandlerContext ctx, Object msg){
         if(msg instanceof ReferenceCounted){
             return (ReferenceCounted) msg;
         }
         if(msg instanceof byte[]){
-            // 兼容旧 byte[] 出站；主链路由 StringEncoder 或业务层直接产出 ByteBuf。
             byte[] bytes = (byte[]) msg;
-            ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
-            buf.writeBytes(bytes);
-            return buf;
+            ByteBufChain chain = new ByteBufChain(true, ctx.executor().allocator());
+            chain.writeBytes(bytes, 0, bytes.length);
+            return chain;
         }
         throw new IllegalArgumentException("Unsupported outbound message type: " + msg.getClass().getName());
     }
 
     private int readableBytes(ReferenceCounted msg){
-        return msg instanceof ByteBuf ? ((ByteBuf) msg).readableBytes() : ((CompositeByteBuf) msg).readableBytes();
+        if (msg instanceof ByteBuf) return ((ByteBuf) msg).readableBytes();
+        if (msg instanceof ByteBufChain) return ((ByteBufChain) msg).readableBytes();
+        return ((CompositeByteBuf) msg).readableBytes();
+    }
+
+    private void appendPayload(ByteBufChain frame, ReferenceCounted payload) {
+        if (payload instanceof ByteBufChain) {
+            frame.appendChain((ByteBufChain) payload);
+        } else if (payload instanceof ByteBuf) {
+            frame.append((ByteBuf) payload);
+        } else {
+            CompositeByteBuf composite = (CompositeByteBuf) payload;
+            byte[] bytes = new byte[composite.readableBytes()];
+            composite.read(bytes, 0, bytes.length);
+            frame.writeBytes(bytes, 0, bytes.length);
+            composite.release();
+        }
     }
 
     @Override

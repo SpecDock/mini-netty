@@ -1,14 +1,12 @@
 package io.github.specdock.mininetty.channel.handler.timeout;
 
 import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.buffer.CompositeByteBuf;
 import io.github.specdock.mininetty.buffer.ReferenceCounted;
-import io.github.specdock.mininetty.buffer.SimpleByteArray;
 import io.github.specdock.mininetty.channel.*;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
-
-import java.nio.ByteBuffer;
 
 public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOutboundHandler {
     @Override
@@ -21,24 +19,20 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         System.out.println("ServerHeartbeatHandler");
-        if (msg instanceof SimpleByteArray) {
-            SimpleByteArray frameData = (SimpleByteArray) msg;
-            if (frameData == null || frameData.end - frameData.begin == 0) return;
-            byte frameType = frameData.bytes[frameData.begin];
-            if (frameType == 1) { System.out.println("ping"); ctx.writeAndFlush(singleByteBuf(2), new DefaultChannelPromise()); return; }
-            if (frameType == 0 && frameData.end - frameData.begin > 1) { frameData.begin++; ctx.fireChannelRead(frameData); }
-            return;
-        }
         ReferenceCounted frame = (ReferenceCounted) msg;
         if (readableBytes(frame) == 0) { frame.release(); return; }
         // readByte 直接推进 readerIndex，相当于零拷贝剥离心跳协议头。
         byte frameType = readByte(frame);
         if (frameType == 1) {
             System.out.println("ping");
-            ctx.writeAndFlush(singleByteBuf(2), new DefaultChannelPromise());
+            ctx.writeAndFlush(singleByteBuf(ctx, 2), new DefaultChannelPromise());
             frame.release();
         } else if (frameType == 0) {
-            if (readableBytes(frame) > 0) ctx.fireChannelRead(frame); else frame.release();
+            if (readableBytes(frame) > 0) {
+                ctx.fireChannelRead(frame);
+            }else {
+                frame.release();
+            }
         } else {
             frame.release();
         }
@@ -57,7 +51,7 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
 
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
-        return ctx.write(withHeader(0, msg), promise);
+        return ctx.write(withHeader(ctx, 0, msg), promise);
     }
 
     @Override
@@ -69,25 +63,36 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
     @Override
     public void flush(ChannelHandlerContext ctx) { ctx.flush(); }
 
-    private ReferenceCounted withHeader(int headerValue, Object payload) {
-        // 通过 1 字节 header + payload 组合添加协议头，不复制业务 payload。
-        return new CompositeByteBuf().addComponent(singleByteBuf(headerValue)).addComponent(toReferenceCounted(payload));
+    private ReferenceCounted withHeader(ChannelHandlerContext ctx, int headerValue, Object payload) {
+        ByteBufChain frame = new ByteBufChain(true, ctx.executor().allocator());
+        frame.writeByte(headerValue);
+        ReferenceCounted body = toReferenceCounted(ctx, payload);
+        if (body instanceof ByteBufChain) frame.appendChain((ByteBufChain) body);
+        else if (body instanceof ByteBuf) frame.append((ByteBuf) body);
+        else {
+            CompositeByteBuf composite = (CompositeByteBuf) body;
+            byte[] bytes = new byte[composite.readableBytes()];
+            composite.read(bytes, 0, bytes.length);
+            frame.writeBytes(bytes, 0, bytes.length);
+            composite.release();
+        }
+        return frame;
     }
 
-    private ByteBuf singleByteBuf(int value) {
-        ByteBuf header = new ByteBuf(ByteBuffer.allocateDirect(1));
+    private ByteBufChain singleByteBuf(ChannelHandlerContext ctx, int value) {
+        ByteBufChain header = new ByteBufChain(true, ctx.executor().allocator());
         header.writeByte(value);
         return header;
     }
 
-    private ReferenceCounted toReferenceCounted(Object msg) {
+    private ReferenceCounted toReferenceCounted(ChannelHandlerContext ctx, Object msg) {
         if (msg instanceof ReferenceCounted) return (ReferenceCounted) msg;
         byte[] bytes = (byte[]) msg;
-        ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
-        buf.writeBytes(bytes);
-        return buf;
+        ByteBufChain chain = new ByteBufChain(true, ctx.executor().allocator());
+        chain.writeBytes(bytes, 0, bytes.length);
+        return chain;
     }
 
-    private int readableBytes(ReferenceCounted msg) { return msg instanceof ByteBuf ? ((ByteBuf) msg).readableBytes() : ((CompositeByteBuf) msg).readableBytes(); }
-    private byte readByte(ReferenceCounted msg) { return msg instanceof ByteBuf ? ((ByteBuf) msg).readByte() : ((CompositeByteBuf) msg).readByte(); }
+    private int readableBytes(ReferenceCounted msg) { if (msg instanceof ByteBuf) return ((ByteBuf) msg).readableBytes(); if (msg instanceof ByteBufChain) return ((ByteBufChain) msg).readableBytes(); return ((CompositeByteBuf) msg).readableBytes(); }
+    private byte readByte(ReferenceCounted msg) { if (msg instanceof ByteBuf) return ((ByteBuf) msg).readByte(); if (msg instanceof ByteBufChain) return ((ByteBufChain) msg).readByte(); return ((CompositeByteBuf) msg).readByte(); }
 }

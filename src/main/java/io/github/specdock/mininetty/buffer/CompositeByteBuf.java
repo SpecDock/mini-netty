@@ -29,6 +29,8 @@ public class CompositeByteBuf implements ReferenceCounted {
         for (ReferenceCounted component : components) {
             if (component instanceof ByteBuf) {
                 sum += ((ByteBuf) component).readableBytes();
+            } else if (component instanceof ByteBufChain) {
+                sum += ((ByteBufChain) component).readableBytes();
             } else if (component instanceof CompositeByteBuf) {
                 sum += ((CompositeByteBuf) component).readableBytes();
             }
@@ -43,6 +45,8 @@ public class CompositeByteBuf implements ReferenceCounted {
             if (readable > 0) {
                 return component instanceof ByteBuf
                         ? ((ByteBuf) component).readByte()
+                        : component instanceof ByteBufChain
+                        ? ((ByteBufChain) component).readByte()
                         : ((CompositeByteBuf) component).readByte();
             }
         }
@@ -59,6 +63,8 @@ public class CompositeByteBuf implements ReferenceCounted {
             int skip = Math.min(length, readableBytes(component));
             if (component instanceof ByteBuf) {
                 ((ByteBuf) component).skipBytes(skip);
+            } else if (component instanceof ByteBufChain) {
+                ((ByteBufChain) component).skipBytes(skip);
             } else {
                 ((CompositeByteBuf) component).skipBytes(skip);
             }
@@ -76,6 +82,8 @@ public class CompositeByteBuf implements ReferenceCounted {
             int read = Math.min(length, readableBytes(component));
             if (component instanceof ByteBuf) {
                 ((ByteBuf) component).read(target, offset, read);
+            } else if (component instanceof ByteBufChain) {
+                ((ByteBufChain) component).read(target, offset, read);
             } else {
                 ((CompositeByteBuf) component).read(target, offset, read);
             }
@@ -99,6 +107,13 @@ public class CompositeByteBuf implements ReferenceCounted {
                 if (buf.readableBytes() > 0) {
                     out.add(buf.nioBuffer());
                 }
+            } else if (component instanceof ByteBufChain) {
+                ByteBufChain chain = (ByteBufChain) component;
+                if (chain.readableBytes() > 0) {
+                    for (ByteBuffer buffer : chain.nioBuffers(Integer.MAX_VALUE)) {
+                        out.add(buffer);
+                    }
+                }
             } else if (component instanceof CompositeByteBuf) {
                 collectNioBuffers((CompositeByteBuf) component, out);
             }
@@ -115,7 +130,9 @@ public class CompositeByteBuf implements ReferenceCounted {
     }
 
     private int readableBytes(ReferenceCounted component) {
-        return component instanceof ByteBuf ? ((ByteBuf) component).readableBytes() : ((CompositeByteBuf) component).readableBytes();
+        if (component instanceof ByteBuf) return ((ByteBuf) component).readableBytes();
+        if (component instanceof ByteBufChain) return ((ByteBufChain) component).readableBytes();
+        return ((CompositeByteBuf) component).readableBytes();
     }
 
     private void ensureAccessible() {

@@ -1,15 +1,15 @@
 package io.github.specdock.mininetty.channel;
 
 import io.github.specdock.mininetty.buffer.ByteBuf;
+import io.github.specdock.mininetty.buffer.ByteBufChain;
 import io.github.specdock.mininetty.buffer.CompositeByteBuf;
+import io.github.specdock.mininetty.buffer.PooledByteBufAllocator;
 import io.github.specdock.mininetty.buffer.ReferenceCounted;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 
-import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
-import java.util.Deque;
 import java.util.LinkedList;
 
 /**
@@ -90,26 +90,17 @@ public class ChannelOutboundBuffer {
     }
 
     private ReferenceCounted toReferenceCounted(Object msg) {
+        if (msg == null) {
+            throw new NullPointerException("msg");
+        }
         if (msg instanceof ReferenceCounted) {
             return (ReferenceCounted) msg;
         }
         if (msg instanceof byte[]) {
             byte[] bytes = (byte[]) msg;
-            ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
-            buf.writeBytes(bytes);
-            return buf;
-        }
-        if (msg instanceof ByteBuffer) {
-            // ByteBuffer 兼容路径需要复制到 direct ByteBuf；主链路应直接传 ByteBuf/CompositeByteBuf。
-            ByteBuffer source = ((ByteBuffer) msg).duplicate();
-            if (source.position() == source.limit()) {
-                source.position(0);
-            }
-            byte[] bytes = new byte[source.remaining()];
-            source.get(bytes);
-            ByteBuf buf = new ByteBuf(ByteBuffer.allocateDirect(bytes.length));
-            buf.writeBytes(bytes);
-            return buf;
+            ByteBufChain chain = new ByteBufChain(true, new PooledByteBufAllocator());
+            chain.writeBytes(bytes, 0, bytes.length);
+            return chain;
         }
         throw new IllegalArgumentException("Unsupported outbound message type: " + msg.getClass().getName());
     }
@@ -128,6 +119,9 @@ public class ChannelOutboundBuffer {
             if(msg instanceof ByteBuf){
                 return ((ByteBuf) msg).readableBytes();
             }
+            if(msg instanceof ByteBufChain){
+                return ((ByteBufChain) msg).readableBytes();
+            }
             return ((CompositeByteBuf) msg).readableBytes();
         }
 
@@ -137,6 +131,11 @@ public class ChannelOutboundBuffer {
                 ByteBuf byteBuf = (ByteBuf) msg;
                 write = socketChannel.write(byteBuf.nioBuffer());
                 byteBuf.skipBytes(write);
+            }
+            else if(msg instanceof ByteBufChain){
+                ByteBufChain chain = (ByteBufChain) msg;
+                write = (int) socketChannel.write(chain.nioBuffers(16));
+                chain.skipBytes(write);
             }
             else {
                 CompositeByteBuf composite = (CompositeByteBuf) msg;
