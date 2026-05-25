@@ -51,6 +51,7 @@ public class ServerHeartbeatHandler implements ChannelInboundHandler, ChannelOut
 
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
+        System.out.println("ServerHeartbeatHandler");
         return ctx.write(withHeader(ctx, 0, msg), promise);
     }
 

@@ -11,8 +11,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class PooledByteBufAllocator {
     // 默认缓冲区大小
-    // 4KB
-    private static final int DEFAULT_BUFFER_SIZE = 1024 * 4;
+    // 8KB
+    private static final int DEFAULT_BUFFER_SIZE = 1024 * 8;
     // 最大池大小
     private static final int MAX_POOL_SIZE = 1024;
 

@@ -2,11 +2,9 @@ package io.github.specdock.mininetty.bootstrap;
 
 
 import io.github.specdock.mininetty.channel.*;
-import io.github.specdock.mininetty.channel.handler.timeout.IdleStateHandler;
-import io.github.specdock.mininetty.channel.handler.timeout.ServerHeartbeatHandler;
+
 import io.github.specdock.mininetty.channel.socket.ServerSocketChannel;
 import io.github.specdock.mininetty.channel.socket.SocketChannel;
-import io.github.specdock.mininetty.util.HeartbeatConstant;
 import io.github.specdock.mininetty.util.concurrent.Future;
 import io.github.specdock.mininetty.util.concurrent.Promise;
 

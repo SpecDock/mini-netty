@@ -68,6 +68,7 @@ public class IdleStateHandler implements ChannelHandler {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        System.out.println("IdleStateHandler:channelRead");
         this.lastReadTimeMs = System.currentTimeMillis();
         ctx.fireChannelRead(msg);
     }
@@ -87,6 +88,7 @@ public class IdleStateHandler implements ChannelHandler {
 
     @Override
     public Future write(ChannelHandlerContext ctx, Object msg, Promise promise) {
+        System.out.println("IdleStateHandler:write");
         return ctx.write(msg, promise);
     }
 
