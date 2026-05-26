@@ -11,10 +11,12 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class PooledByteBufAllocator {
     // 默认缓冲区大小
-    // 8KB
-    private static final int DEFAULT_BUFFER_SIZE = 1024 * 8;
+    // 4KB
+    private static final int DEFAULT_BUFFER_SIZE = 1024 * 4;
     // 最大池大小
-    private static final int MAX_POOL_SIZE = 1024;
+    private static final int MAX_POOL_SIZE = 1024 * 10;
+    // 最小池大小
+    private static final int MIN_POOL_SIZE = 1024;
 
     // 直接内存缓冲区池
     private final Queue<ByteBuf> directBufferPool;
@@ -38,6 +40,13 @@ public class PooledByteBufAllocator {
         this.bufferSize = bufferSize;
         this.directBufferPool = new ConcurrentLinkedQueue<>();
         this.heapBufferPool = new ConcurrentLinkedQueue<>();
+
+        // 预分配一些缓冲区到池中
+        for (int i = 0; i < MIN_POOL_SIZE; i++) {
+            directBufferPool.offer(new ByteBuf(ByteBuffer.allocateDirect(bufferSize), this));
+            heapBufferPool.offer(new ByteBuf(ByteBuffer.allocate(bufferSize), this));
+        }
+
     }
 
     /**

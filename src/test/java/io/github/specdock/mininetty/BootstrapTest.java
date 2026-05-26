@@ -46,7 +46,7 @@ public class BootstrapTest {
                                         eventExecutors.scheduleAtFixedRate(() -> {
                                             System.out.println(">> 定时任务已触发，准备将数据压入 Pipeline");
                                             ctx.pipeline().writeAndFlush("你好，我是客户端，我是业务数据" + STRING);
-                                        }, 0, 50 * 1000, TimeUnit.MILLISECONDS);
+                                        }, 0, 10 * 1000, TimeUnit.MILLISECONDS);
                                     }
                                 });
                     }

@@ -52,18 +52,34 @@ public class StringEncoder implements ChannelOutboundHandler {
                 ByteBuffer dst = chain.writableNioBuffer();
                 int before = dst.position();
                 CoderResult result = encoder.encode(src, dst, true);
-                chain.advanceWriterIndex(dst.position() - before);
-                if (result.isOverflow()) continue;
-                if (result.isError()) result.throwException();
+                int written = dst.position() - before;
+                chain.advanceWriterIndex(written);
+                if (result.isOverflow()) {
+                    if (written == 0) {
+                        chain.forceNewWritableBuffer();
+                    }
+                    continue;
+                }
+                if (result.isError()) {
+                    result.throwException();
+                }
                 break;
             }
             while (true) {
                 ByteBuffer dst = chain.writableNioBuffer();
                 int before = dst.position();
                 CoderResult result = encoder.flush(dst);
-                chain.advanceWriterIndex(dst.position() - before);
-                if (result.isOverflow()) continue;
-                if (result.isError()) result.throwException();
+                int written = dst.position() - before;
+                chain.advanceWriterIndex(written);
+                if (result.isOverflow()) {
+                    if (written == 0) {
+                        chain.forceNewWritableBuffer();
+                    }
+                    continue;
+                }
+                if (result.isError()){
+                    result.throwException();
+                }
                 break;
             }
             ctx.write(chain, promise);
@@ -72,7 +88,9 @@ public class StringEncoder implements ChannelOutboundHandler {
             promise.setFailure(e);
             throw new RuntimeException("Failed to encode string", e);
         } finally {
-            if (!success) chain.release();
+            if (!success) {
+                chain.release();
+            }
         }
         return promise;
     }

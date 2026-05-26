@@ -50,6 +50,19 @@ public class CodecAndHeartbeatChainTest {
     }
 
     @Test
+    public void stringDecoderHandlesUtf8CharacterAcrossByteBufferBoundary() {
+        CapturingContext ctx = new CapturingContext(new PooledByteBufAllocator(4));
+        ByteBufChain chain = new ByteBufChain(true, ctx.executor().allocator());
+        byte[] bytes = "你好".getBytes(StandardCharsets.UTF_8);
+        chain.writeBytes(bytes, 0, bytes.length);
+
+        new StringDecoder().channelRead(ctx, chain);
+
+        assertEquals("你好", ctx.firedRead);
+        assertEquals(0, chain.refCnt());
+    }
+
+    @Test
     public void clientHeartbeatPassesByteBufChainDataFrames() {
         CapturingContext ctx = new CapturingContext(new PooledByteBufAllocator(4));
         ByteBufChain frame = new ByteBufChain(true, ctx.executor().allocator());

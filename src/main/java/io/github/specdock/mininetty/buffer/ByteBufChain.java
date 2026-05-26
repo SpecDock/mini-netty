@@ -127,6 +127,11 @@ public class ByteBufChain implements ReferenceCounted {
         return getLastWritableBuf().writableNioBuffer();
     }
 
+    public void forceNewWritableBuffer() {
+        ensureAccessible();
+        createLast();
+    }
+
     public void advanceWriterIndex(int bytes) {
         ensureAccessible();
         ByteBuf last = bufferChain.isEmpty() ? null : bufferChain.getLast();
